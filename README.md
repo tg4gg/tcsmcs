@@ -38,8 +38,12 @@ while dt < end:
     #print args
     call(args)
 ```
-4. Run the script to get your data in the outpath.
+4. Run the script `python archiveExport.py` to get your data in the outpath.
 ### Download
+I usually `$ rsync --avz <outpath> <staging_area>` .
+For example to update the latest new files, the details need to perfectly match the staging area directory stucture.
+If you're processing the MCS, then this will work when executing from geasouth, (watch the trailing slashes '/'):
+`rsync -avz /export/home/software/mrippa/mcs/ software@sbfrtdev-lv1:work/data/tcsmcs/mcsDataCPO`
 
 ### Process
 
