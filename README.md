@@ -7,9 +7,10 @@ The entire process has a few key steps to generate scatter plots of sample rate 
 4. Generate scatter plots.
 
 ## Gemini South
+### Harvest
 1. Login to software@geasouth.
 2. Use the python script **/export/home/software/archiveExport.py** below to harvest full sample rate data.
-3. Taylor this script for the channels and output directories of your choice.
+3. Taylor this script for the daterange, channels and output directories of your choice.
 ```python
 from subprocess import call
 import sys, datetime, shlex
@@ -38,7 +39,11 @@ while dt < end:
     call(args)
 ```
 4. Run the script to get your data in the outpath.
+### Download
 
+### Process
+
+### Generate
 
 
 ## Gemini North
