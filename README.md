@@ -43,7 +43,7 @@ while dt < end:
 I usually `$ rsync --avz <outpath> <staging_area>` .
 For example to update the latest new files, the details need to perfectly match the staging area directory stucture.
 If you're processing the MCS, then this will work when executing from geasouth, (watch the trailing slashes '/'):
-`rsync -avz /export/home/software/mrippa/mcs/ software@sbfrtdev-lv1:work/data/tcsmcs/mcsDataCPO`
+`rsync -avz /export/home/software/mrippa/mcs/ software@sbfrtdev-lv1:/archive/tcsmcs/mcsDataCPO`
 
 ### Process
 
