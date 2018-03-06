@@ -50,8 +50,11 @@ Once the raw data is downloaded, you need to process this to generate the proper
 The script attempts to be efficient by only pickling new data. Once a dataset has been pickled it won't need to run again.
 Raw (`*.txt` files are from GEA). They go in directories named `<system>Data<site>`, like mcsDataMKO in this case. Binary pickles will go into `<system>binary<site>`, like mcsbinaryCPO in this case.
 
+`$ python procRaw.py`
 
 ### Generate
 
+`$ python plot2.py`
 
 ## Gemini North
+Same as above except we harvest from geanorth.
