@@ -1,0 +1,202 @@
+#!/usr/bin/env python
+
+# vim: ai:sw=4:sts=4:expandtab
+
+###########################################################
+#
+#  PMAC Error Data Filtering
+#
+#  This script is designed to filter PMAC position error data,
+#  matching it against a velocity, in order to identify potential
+#  periods where MCS is not properly following the TCS positioning
+#  stream
+#
+#  Author:        Ricardo Cardenes <rcardenes@gemini.edu>
+#
+#  2018-04-02 (rjc): First functional version
+#  2018-04-03 (tg):  Modified the command line arguments to simplify referring
+#                    to the raw data
+#  2018-04-03 (rjc): Refactored the code to include a specialized grouping function
+#                    instead of the memoizing predicate we had before
+
+from collections import namedtuple
+from datetime import datetime, timedelta
+import argparse
+import sys
+import os
+from pprint import pprint
+
+from swglib import DataRange, DataRangeCollection
+from swglib import producer, find_event_ranges
+
+ERRTHRESHOLD_ARCSEC = 1.5
+VELTHRESHOLD = 0.04
+# Number of consecutive errors that make a significant event
+# With high-resolution data, we have 10 measurements per second
+SIGNIFICANT = 5
+
+# Error threshold, in degrees
+ERRTHRESHOLD = ERRTHRESHOLD_ARCSEC/3600.0
+
+# We're looking for consecutive values past the threshold, allowing
+# for small gaps. This value defines how large the gap can be
+MAXGAP = 90*10
+
+# When a high velocity event occurs the error will raise naturally
+# so we want to ignore X seconds before and after this event
+HVEL_PADDING = 10 
+
+# Padding to be used for plotting
+PLOT_PADDING = 5 # seconds
+
+# Site should be either 'cp' or 'mk'
+SITE = 'cp'
+if SITE == 'cp':
+    # directory where the data is located
+    root_data_dir = '/archive/tcsmcs/data'
+    if not os.path.exists(root_data_dir):
+        root_data_dir = '/net/cpostonfs-nv1/tier2/gem/sto/archiveRTEMS/tcsmcs/data'
+else:
+    raise NotImplementedError("The script hasn't still been adapted for MK")
+
+DEBUG = False
+
+def parse_args():
+    yesterday = (datetime.now()-timedelta(days=1)).strftime("%Y-%m-%d")
+    enableDebugDate = "debug"
+
+    parser = argparse.ArgumentParser(description='Filter PMAC Error data')
+    thrhold = parser.add_mutually_exclusive_group()
+    thrhold.add_argument('-arc',    '--err_thr_as',     dest='pmac_eth_arc',    default=ERRTHRESHOLD_ARCSEC, type=float, help='PMAC error threshold, in arcsec')
+    thrhold.add_argument('-deg',    '--err_thr_deg',    dest='pmac_eth_deg',    default=ERRTHRESHOLD, type=float, help='PMAC error threshold, in degrees')
+    parser.add_argument('-sig',     '--sign_ev',        dest='significant_ev',  default=SIGNIFICANT, type=int, help='Number of consecutive errors considered as significant')
+    parser.add_argument('-gap',     '--max_gap',        dest='max_gap',         default=MAXGAP, type=int, help='Number of values under threshold that still count as within a significant chunk of error data')
+    parser.add_argument('-axis',    '--axis',           dest='axis',            default='az', help='Axis to be analyzed, should be az or el')
+    parser.add_argument('-date',    '--date',           dest='date',            default=enableDebugDate, help='Date - format YYYY-MM-DD')
+    parser.add_argument('-hvpad',   '--high_vel_pad',   dest='hvel_padding',    default=HVEL_PADDING, type=float, help='Padding applied before and after a high velocity events, in seconds')
+    parser.add_argument('-plpad',   '--plot_pad',       dest='plot_padding',    default=PLOT_PADDING, type=float, help='Padding applied before and after a high velocity events, in seconds')
+    parser.add_argument('-velthr',   '--vel_thr',        dest='vel_thr',         default=VELTHRESHOLD, type=float, help='Velocity threshold for high velocity events, in degrees')
+
+    args = parser.parse_args()
+    if args.pmac_eth_deg != ERRTHRESHOLD:
+        args.pmac_eth_arc = args.pmac_eth_deg * 3600.0
+    elif args.pmac_eth_arc != ERRTHRESHOLD_ARCSEC:
+        args.pmac_eth_deg = args.pmac_eth_arc / 3600.0
+
+    if args.max_gap < 0:
+        print sys.stderr >> "Can't accept negative numbers for the gap"
+        sys.exit(-1)
+
+    print "Using arguments: [-arc {0} | -deg {1:0.5f}] -sig {2} -gap {3} -axis {4} -date {5} -hvpad {6} -plpad {7} -velthr {8}".format(args.pmac_eth_arc, 
+    					args.pmac_eth_deg, args.significant_ev, args.max_gap, args.axis, args.date, args.hvel_padding, args.plot_padding, args.vel_thr)
+
+    #Construct the path to the data    
+    args.error_data = os.path.join(
+            root_data_dir, SITE, 'mcs',
+            '{0}PmacPosError'.format(args.axis),
+            'txt', 
+            '{0}_{1}_mc-{2}PmacPosError_export.txt'.format(args.date, SITE, args.axis)
+        )
+
+    if (args.date == enableDebugDate):
+    	print "DEBUG MODE ENABLED -\_(\")_/-"
+        args.error_data = (
+            args.error_data.replace(enableDebugDate, "2018-03-22")
+                .replace(".txt", "_test.txt")
+                .replace("azPmacPosError", "elPmacPosError")
+            )
+        args.axis = "el"
+    
+    args.vel_data = args.error_data.replace("PmacPosError","CurrentVel")    
+
+
+    return args
+
+args = parse_args()
+
+# ---------- MAIN ----------
+
+err_producer = producer(args.error_data)
+vel_producer = producer(args.vel_data)
+
+error_ranges = DataRangeCollection()
+err_pred = lambda x: abs(x[1]) > args.pmac_eth_deg
+print "Analyzing errors..."
+for group in find_event_ranges(err_producer, err_pred, significant=args.significant_ev, gap=args.max_gap):
+    error_ranges.append(DataRange(group, err_pred))
+
+rawErrLen = len(error_ranges)
+vel_pred = lambda x: abs(x[1]) > args.vel_thr
+
+print "Subtracting high velocity ranges..."
+is_significant = lambda dr: len(filter(err_pred, dr)) >= args.significant_ev
+for group in find_event_ranges(vel_producer, vel_pred, significant=0, gap=args.max_gap):
+    error_ranges.subtract(DataRange(group, vel_pred, padding=args.hvel_padding), is_significant)
+
+if len(error_ranges):
+    prevTSEnd = error_ranges.time_bounds.start
+    for i, rng in enumerate(error_ranges):
+        print "Range [{0}] {1} # errors: {4}, length: {2}, distance from previous: {3}".format(i, rng.time_bounds.start,\
+                                                                                               rng.period_length, rng.time_bounds.start-prevTSEnd, rng.outliers)
+        prevTSEnd = rng.time_bounds.end
+print "\nError zones: {0}, after velocity filter: {1}".format( rawErrLen, len(error_ranges))
+
+#sys.exit()
+
+# ---------- Plotting starts here ----------
+import pdb
+import matplotlib.pyplot as plt
+
+def getSubset(producer, begin, end):
+    lst = list()
+    for x in producer:       
+        if x[0] > begin:
+            lst.append((x[0], x[1]))       
+        if x[0] > end:
+            return lst 
+
+print "Plotting..."
+err_producer2 = producer(args.error_data)
+vel_producer2 = producer(args.vel_data)
+
+#for dr in error_ranges:
+for i, dr in enumerate(error_ranges):
+    #pdb.set_trace()
+    
+    begin, end = dr.time_bounds
+    begin_padded = begin -timedelta(seconds=args.plot_padding)
+    end_padded = end + timedelta(seconds=args.plot_padding)
+    vel_lst, err_lst = list(), list()    
+    vel_lst = getSubset(vel_producer2, begin_padded, end_padded)
+    err_lst = getSubset(err_producer2, begin_padded, end_padded)   
+    velTime,velVal=zip(*vel_lst)
+    errTime,errVal=zip(*err_lst)
+        
+    
+    fig, ax1 = plt.subplots()   
+    plt.title("PMAC Position Error vs Velocity on Axis: %s - Error range [%d] # errors: %d \n%s" % (args.axis, i, dr.outliers, dr) )
+
+    #Plot velocity
+    ax1.set_ylabel("Velocity (degrees/s.)", color="b")    
+    ax1.plot(velTime,velVal, "b-")
+    ax1.tick_params("y", colors="b")
+    ax1.grid(True)
+    
+    #Plot error
+    ax2 = ax1.twinx()    
+    ax2.set_ylabel("Position Error (arcseconds)", color="r")
+    ax2.plot(errTime, [x*3600.0 for x in errVal], "r.")
+    ax2.tick_params("y", colors="r")
+
+    #Plot information
+    ax2.axhline(y=args.pmac_eth_arc, color='r', ls='--')
+    ax2.axhline(y=-1*args.pmac_eth_arc, color='r', ls='--')    
+    first_val = min(errTime[0], velTime[0])
+    last_val = max(errTime[-1], velTime[-1])        
+    ax2.axvspan(first_val, begin, facecolor='0.2', alpha=0.3)
+    ax2.axvspan(end, last_val, facecolor='0.2', alpha=0.3)
+    
+        
+    plt.gcf().autofmt_xdate()
+    plt.show()
+
