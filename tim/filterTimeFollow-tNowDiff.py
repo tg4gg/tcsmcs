@@ -152,7 +152,7 @@ outliersInPeriod = 0
 periodLimits = Limits(-1,1)
 
 #FollowArray = namedtuple('FollowArray', 'timestamp now targetTime trackId azPos elPos diff')
-when = datetime.strptime("2018-04-26 11:18", "%Y-%m-%d %H:%M")
+when = datetime.strptime("2017-04-26 11:18", "%Y-%m-%d %H:%M")
 
 for dp in flw_producer:
     #print dp.targetTime-dp.now
