@@ -23,6 +23,7 @@ import os
 LEGEND_LOCATION = 'lower left'
 TZ = 'America/Santiago'
 PLOT_ZONE_FILE = './zones.cfg'
+MARKERSIZE = 0.5
 
 
 TCS_SYSTEM = 'tcs'
@@ -33,7 +34,7 @@ MCS_CA = 'mc:followA.J'
 # Modes
 EXEC_TIME_MODE = 'execTime'
 POS_DIFF_MODE = 'posDiff' #shortcut for rawDiff -cols 4,5
-PERIOD_MODE = 'periodicity'
+PERIOD_MODE = 'period'
 RAW_MODE = 'raw'
 
 FollowArray = namedtuple('FollowArray', 'timestamp now targetTime trackId azPos elPos diff')
@@ -189,6 +190,66 @@ def addZones(ax, begin, end):
         ax.axvspan(za.begin, za.end, facecolor=za.color, label=za.title, alpha=0.3)
     
     ax.legend(loc=LEGEND_LOCATION)
+    
+def plotPeriod():
+    """
+    Here we are measuring periodicity between executions
+    and periodicity (or duration) between consecutive targetTime calculations
+    """
+    flw_producer = producer(args.data_path)
+    
+    first = flw_producer.next()
+    diffNow_lst, diffTarget_lst = list(), list()
+    prevNowT, prevTargetT = first.now, first.targetTime
+    outliersInPeriod = 0
+    periodLimits = Limits(-1,1)
+    
+    when = strptimeTz("2017-04-26 11:18:00")#TODO implement this as a argument
+    
+    for dp in flw_producer:
+        tBetweenExecutions = (dp.now-prevNowT).total_seconds()
+        tBetweenTargets = (dp.targetTime-prevTargetT).total_seconds()
+        if(when<dp.timestamp):
+            if tBetweenExecutions > periodLimits.upper or tBetweenExecutions < periodLimits.lower:
+                print "tBetweenExecutions={0} tBetweenTargets={1} at GEA time: {2}".format(
+                        tBetweenExecutions, tBetweenTargets, dp.timestamp)
+                outliersInPeriod += 1
+            else:
+                diffNow_lst.append((dp.timestamp, tBetweenExecutions*1000.0))
+                diffTarget_lst.append((dp.timestamp, tBetweenTargets*1000.0))
+        prevNowT, prevTargetT = dp.now, dp.targetTime
+         
+    print "Last read line with date:", dp.timestamp
+    periodTime,periodVal=zip(*diffNow_lst)
+    
+    fig, ax1 = plt.subplots()   
+    plt.title("TCS-MCS Communication Analysis: {0} data from {1}".format(args.system, args.date))
+    ax1.plot(periodTime, periodVal, "b.", markersize=MARKERSIZE)
+    ax1.grid(True)
+    ax1.tick_params("y", colors="b")
+    ax1.set_ylabel("timeNow - previous timeNow (milliseconds)", color="b")
+    
+    #if outliersInPeriod > 0:
+        #ax1.set_ylim(*periodLimits)
+    #    print "Fixed scaling due to outliers"
+    #else:
+    #print "Rescaling Period axis due to no outliers in sample set"
+    #ax1.set_yticks(np.arange(-0.05, 0.05, step=0.005))
+    #ax1.axvspan(when, when+timedelta(minutes=230), facecolor='0.2', alpha=0.3)    
+    
+    if True: #Plot also diffs in target time
+        targetTime, targetVal=zip(*diffTarget_lst)
+    
+        ax2 = ax1.twinx()
+        ax2.plot(targetTime, targetVal, "r.", markersize=MARKERSIZE)
+        ax2.tick_params("y", colors="r")
+        ax2.set_ylabel("targetTime - previous targetTime (milliseconds)", color="r")
+    
+    print "Number of detected period outliers: {0}".format(outliersInPeriod)
+    
+    addZones(ax1, periodTime[0], periodTime[-1])
+    plt.gcf().autofmt_xdate()
+    plt.show()
 
 # -----------------------------------------------------------------------------
 # ------------------------------------ MAIN -----------------------------------
@@ -208,14 +269,11 @@ if args.mode == EXEC_TIME_MODE :
     
     fig, ax1 = plt.subplots()   
     plt.title("TCS-MCS Communication Analysis: {0} data from {1}\n Time before target time".format(args.system, args.date))
-    ax1.plot(diffTime, diffVal, "b.")
+    ax1.plot(diffTime, diffVal, "b.", markersize=MARKERSIZE)
     ax1.grid(True)
     #ax1.set_ylim([-0.05,0.05])
     #ax1.set_yticks(np.arange(-0.05, 0.05, step=0.005))
-   
-    addZones(ax1, diffTime[0],diffTime[-1])
-    
-    
+ 
     if args.system == 'both':
         flw_producer2 = producer(args.tcs_data_path)
         #TODO: Fix legend issues when plotting both subsystems
@@ -226,9 +284,10 @@ if args.mode == EXEC_TIME_MODE :
         diffTime2,diffVal2=zip(*diff_lst2)    
     
         #ax2 = ax1.twinx()
-        ax1.plot(diffTime2, diffVal2, "r.")
+        ax1.plot(diffTime2, diffVal2, "r.", markersize=MARKERSIZE)
         plt.gca().legend((MCS_SYSTEM+' entry', TCS_SYSTEM+' exit'))
     
+    addZones(ax1, diffTime[0],diffTime[-1])
     plt.gcf().autofmt_xdate()
     plt.show()
 
@@ -262,7 +321,7 @@ elif args.mode == POS_DIFF_MODE:
     plt.title("TCS-MCS Communication Analysis: {0} data from {1}".format(args.system, args.date))
     
     #Plot AZ
-    ax1.plot(azTime, azVal, "b.-")
+    ax1.plot(azTime, azVal, "b.-", markersize=MARKERSIZE)
     ax1.grid(True)
     ax1.tick_params("y", colors="b")
     ax1.set_ylabel("Azimuth difference between samples (not respecting timestamp - velocity)", color="b")
@@ -271,15 +330,14 @@ elif args.mode == POS_DIFF_MODE:
     #Plot EL
     elTime, elVal=zip(*el_lst)
     ax2 = ax1.twinx()
-    ax2.plot(elTime, elVal, "r.-")
+    ax2.plot(elTime, elVal, "r.-", markersize=MARKERSIZE)
     ax2.tick_params("y", colors="r")
     ax2.set_ylabel("Elevation", color="r")
     ax2.set_ylim(-10, 10)
 
-    addZones(ax1, azTime[0],azTime[-1])
     print "Number of detected period outliers: {0}".format(outliersInPeriod)
     print "Watch out: plot ylim set to -10 , 10 some information may not be shown on the graph" #TODO: At least count samples left out and report
-    
+    addZones(ax1, azTime[0],azTime[-1])
     plt.gcf().autofmt_xdate()
     plt.show()
     
@@ -297,74 +355,7 @@ elif args.mode == RAW_MODE:
     fig, ax1 = plt.sublplots()
 
 elif args.mode == PERIOD_MODE:
-    """
-    Here we are measuring periodicity between executions
-    and periodicity (or duration) between consecutive targetTime calculations
-    """
-
-    flw_producer = producer(args.data_path)
-
-    first = flw_producer.next()
-    diffNow_lst = list()
-    diffTarget_lst = list()
-    prevNowT = first.now
-    prevTargetT = first.targetTime
-    
-    outliersInPeriod = 0
-    periodLimits = Limits(-1,1)
-    
-    #FollowArray = namedtuple('FollowArray', 'timestamp now targetTime trackId azPos elPos diff')
-    when = strptimeTz("2017-04-26 11:18:00")#TODO implement this as a argument
-    
-    for dp in flw_producer:
-        #print dp.targetTime-dp.now
-        #print dp.diff.total_seconds()
-        tBetweenExecutions = (dp.now-prevNowT).total_seconds()
-        tBetweenTargets = (dp.targetTime-prevTargetT).total_seconds()
-        if(when<dp.timestamp):
-            if tBetweenExecutions > periodLimits.upper or tBetweenExecutions < periodLimits.lower:
-                print "tBetweenExecutions={0} tBetweenTargets={1} at GEA time: {2}".format(
-                        tBetweenExecutions, tBetweenTargets, dp.timestamp)
-                outliersInPeriod += 1
-            else:
-                diffNow_lst.append((dp.timestamp, tBetweenExecutions*1000.0))
-                diffTarget_lst.append((dp.timestamp, tBetweenTargets*1000.0))
-        prevNowT, prevTargetT = dp.now, dp.targetTime
-         
-        
-    print "Last read line with date:", dp.timestamp
-    diffTime,diffVal=zip(*diff_lst)
-    
-    fig, ax1 = plt.subplots()   
-    plt.title("TCS-MCS Communication Analysis: {0} data from {1}".format(args.system, args.date))
-    ax1.plot(diffTime, diffVal, "b.")
-    ax1.grid(True)
-    ax1.tick_params("y", colors="b")
-    ax1.set_ylabel("timeNow - previous timeNow (milliseconds)", color="b")
-    
-    #if outliersInPeriod > 0:
-        #ax1.set_ylim(*periodLimits)
-    #    print "Fixed scaling due to outliers"
-    #else:
-    #print "Rescaling Period axis due to no outliers in sample set"
-    #ax1.set_yticks(np.arange(-0.05, 0.05, step=0.005))
-    #ax1.axvspan(when, when+timedelta(minutes=230), facecolor='0.2', alpha=0.3)
-    
-    ax2 = ax1.twinx()
-    
-    
-    if True: #Plot also diffs
-        targetTime, targetVal=zip(*diffTarget_lst)
-        #ax1.plot(execTime, execVal, "r.")
-    
-        ax2 = ax1.twinx()
-        ax2.plot(targetTime, targetVal, "r.")
-        ax2.tick_params("y", colors="r")
-        ax2.set_ylabel("targetTime - previous targetTime (milliseconds)", color="r")
-    
-    
-    print "Number of detected period outliers: {0}".format(outliersInPeriod)
-    
-    addZones(ax1, diffTime[0],diffTime[-1])
-    plt.gcf().autofmt_xdate()
-    plt.show()
+   plotPeriod()
+   
+else:
+    print "Mode not found, check spelling"

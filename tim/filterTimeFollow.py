@@ -185,7 +185,7 @@ ax2 = ax1.twinx()
 if True: #Plot also diffs
     execTime, execVal=zip(*exec_lst)
     ax2 = ax1.twinx()
-    ax2.plot(execTime, execVal, "r.")
+    ax2.plot(execTime, execVal, "r.", markersize=0.5)
     ax2.tick_params("y", colors="r")
     ax2.set_ylabel("Execution time + forward time (targetTime-now)", color="r")
 
