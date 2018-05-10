@@ -15,6 +15,8 @@ from datetime import datetime
 from itertools import izip
 import numpy as np
 from time import mktime
+from collections import namedtuple
+import tempfile
 
 ARCHIVE_EXPORTER = '/gemsoft/opt/epics/extensions/bin/linux-x86_64/ArchiveExport'
 ARCHIVE_EXPORT_DATA_PATH = '/gemsoft/var/data/gea/data/data/{source}/master_index'
@@ -22,6 +24,40 @@ ARCHIVE_SITE_URL = {
         'MK': 'http://geanorth.hi.gemini.edu/run/ArchiveDataServer.cgi',
         'CP': 'http://geasouth.cl.gemini.edu/run/ArchiveDataServer.cgi',
         }
+
+ARCHIVE_MAPPING = {
+    'cal': 'cal',
+    'ref': 'cal',
+    'ag': 'ag',
+    'cr': 'crcs',
+    'ec': 'ecs',
+    'gis': 'gis',
+    'gm': 'gmos',
+    'ws': 'gws',
+    'mc': 'mcs',
+    'niri': 'niri',
+    'm1': 'pcs',
+    'm2': 'scs',
+    'ao': 'tcs',
+    'oiwfs': 'tcs',
+    'pwfs1': 'tcs',
+    'pwfs2': 'tcs',
+    'tcs': 'tcs',
+    'las': 'laser',
+    'lhx': 'laser',
+    'lis': 'laser',
+    'ltcss': 'laser',
+    'bto': 'bto',
+    'nifs': 'nifs',
+    'gc': 'gcal',
+    'gnirsgate': 'gnirs',
+    'nirs': 'gnirs',
+    'tc': 'gnirs',
+    'bfo': 'pr',
+    'fps': 'pr',
+    'hbs': 'pr',
+    'pr': 'pr',
+    }
 
 def _format_value(value):
     if isinstance(value, float):
@@ -47,6 +83,9 @@ class ArchiveFileExporter(object):
             args.extend(['-output', output])
 
         return [self.bin_exec, self.source] + args
+
+    def retrieve(self, source, channel, start, end):
+        raise NotImplementedError("This functionality hasn't been implemented")
 
 def split_timestamp_to_dt(sample):
     return np.datetime64(datetime.fromtimestamp(sample['secs'])) + np.timedelta64(sample['nano'], 'ns')
@@ -109,5 +148,170 @@ def archive_export(system, channel, output, start=None, end=None, site=None, ove
                 outfile.write('\t'.join(tuple(_format_value(x) for x in sample)) + '\n')
         return True
 
+RawIndexEntry = namedtuple('RawIndexEntry', 'name start end')
+
+class CacheFile(object):
+    def __init__(self, cache_manager):
+        self._cm = cache_manager
+        self._file = None
+        self._first = None
+        self._last = None
+
+    def __enter__(self):
+        try:
+            self._file = self._cm.create_temp_file()
+            # return self._file
+            return self
+        except (OSError, IOError):
+            # Re-raise usual exceptions
+            raise
+
+    def __exit__(self, type_, value, traceback):
+        if type_ is None:
+            self._file.close()
+            if self._first is not None:
+                self._cm.add_file(self._file.name, self._first, self._last)
+            else:
+                os.remove(self._file)
+
+    def write(self, stamp, items):
+        if stamp not in self._cm:
+            self._file.write('\t'.join([stamp.isoformat()] + ["{0:.9f}".format(i) for i in items]) + '\n')
+            if self._first is None:
+                self._first = stamp
+            self._last = stamp
+
+def toseconds(dt):
+    return(dt - datetime.fromtimestamp(0)).total_seconds()
+
+class RawCacheManager(object):
+    def __init__(self, root_dir, site, db, pvname):
+        self.root = root_dir
+        self.site = site
+        self.db = db
+        self.pvname = pvname
+        self.cache_dir = os.path.join(root_dir, site, db, pvname, 'raw')
+        self._intervals = None
+
+    def __contains__(self, stamp):
+        for interval in self.get_intervals(refresh=False):
+            if interval.start <= stamp <= interval.end:
+                return True
+        return False
+
+    @property
+    def cache_file(self):
+        return os.path.join(self.cache_dir, 'index.txt')
+
+    def dump_index(self):
+        if self._intervals is not None:
+            with open(self.cache_file, 'w') as index_file:
+                for interval in self._intervals:
+                    index_file.write("{0}\t{1:.9f}\t{2:.9f}\n".format(os.path.basename(interval[0]),
+                                                                      toseconds(interval[1]),
+                                                                      toseconds(interval[2])))
+
+    def get_intervals(self, refresh):
+        if self._intervals is None or refresh:
+            try:
+                self._intervals = []
+                for line in open(self.cache_file):
+                    bits = line.strip().split('\t')
+                    path = os.path.join(self.cache_dir, bits[0])
+                    self._intervals.append(RawIndexEntry(path, datetime.fromtimestamp(float(bits[1])),
+                                                               datetime.fromtimestamp(float(bits[2]))))
+            except (IOError, OSError):
+                # Possibly, no cache file
+                self._intervals = None
+        return self._intervals or []
+
+    def get_intersection(self, start, end, refresh=False):
+        result = []
+        for interval in self.get_intervals(refresh):
+            # Intervals are non-overlapping and sorted by (start, end) points
+            if interval.end < start or interval.start > end:
+                break
+            c1 = interval.start <= start <= interval.end
+            c2 = interval.start <= end <= interval.end
+            c3 = start <= interval.start and interval.end <= end
+            if c1 or c2 or c3:
+                result.append(interval.name)
+
+        return [os.path.join(self.cache_dir, fn) for fn in result]
+
+    def get_file_name(self, start, end, full_path=False):
+        fname = "{0}_{1}".format(start.isoformat(), end.isoformat())
+        if full_path:
+            return os.path.join(self.cache_dir, fname)
+        else:
+            return fname
+
+    def new_file(self):
+        return CacheFile(self)
+
+    def create_temp_file(self):
+        if not os.path.exists(self.cache_dir):
+            os.makedirs(self.cache_dir)
+        return tempfile.NamedTemporaryFile(dir=self.cache_dir, delete=False)
+
+    def add_to_index(self, path, start, end):
+        # TODO: This function should make sure that the intervals do not overlap
+        #       but we're going to assume it so far.
+        interval_set = set(self.get_intervals(refresh=False))
+        interval_set.add(RawIndexEntry(path, start, end))
+        self._intervals = sorted(interval_set)
+        self.dump_index()
+
+    def add_file(self, path, start, end, is_temp=True):
+        if is_temp:
+            newfn = self.get_file_name(start, end, full_path=True)
+            os.rename(path, newfn)
+            path = newfn
+        self.add_to_index(path, start, end)
+
+class DataManager(object):
+    def __init__(self, exporter, root_dir=None):
+        self.exp = exporter
+        self.root = root_dir if root_dir is not None else os.getcwd()
+
+    def getData(self, pvname, start, end, db=None, cache_data=True, cache_query=False):
+        """
+        `pvname`: The Process Variable name
+        `start`:  `datetime` compatible object with the first timestamp for the query
+        `end`:    `datetime` compatible object with the last timestamp for the query
+        `db`:     The name for the database which stores the data. A number of common
+                  prefixes will be automatically mapped to databases, but some of them
+                  are not 1-to-1, and thus `db` can be explicitly named.
+        `cache_data`:
+                  Whether to cache the downloaded raw data for this particular query,
+                  or not. By default this is `True`. Queries overlapping with cached data
+                  won't need to be downloaded again in full.
+        `cache_query`:
+                  Whether to cache the current query for reuse. A separate binary cache
+                  is created for this specific query. Beware, unlike the data downloaded,
+                  affected by `cache_data`, overlapping queries are stored separately,
+                  in full. By default, this argument is `False`.
+        """
+
+def get_exporter(source):
+    """
+    If `source` is one of `'MK'` or `'CP'`, an instance of `ArchiveXmlRpcExporter` will
+    be returned. Otherwise, an instance of `ArchiveFileExporter` initialized with `source`
+    as the database name.
+    """
+    if source in ARCHIVE_SITE_URL:
+        return ArchiveXmlRpcExporter(source)
+    else:
+        return ArchiveFileExporter(source)
+
 if __name__ == '__main__':
-    archive_export('mcs', 'mc:azDemandPos', start=datetime(2018, 5, 4), end=datetime(2018, 5, 4, 6), output='/tmp/azDemandPos.txt', site='MK', overwrite=True)
+    # archive_export('mcs', 'mc:azDemandPos', start=datetime(2018, 5, 4), end=datetime(2018, 5, 4, 6), output='/tmp/azDemandPos.txt', site='MK', overwrite=True)
+    # TEST CODE
+    import random
+    from datetime import timedelta
+    rcm = RawCacheManager('/tmp/rcm', 'MK', 'mcs', 'mcs:foo.bar')
+    now = datetime.now()
+    td = timedelta(microseconds=100000)
+    with rcm.new_file() as dest:
+        for stamp, value in ((now + td*n, 15 + (0.5 - random.random())) for n in range(100)):
+            dest.write(stamp, [value])
