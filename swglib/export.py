@@ -14,7 +14,7 @@ import xmlrpclib
 from datetime import datetime, timedelta
 from itertools import izip, takewhile
 import numpy as np
-from time import mktime
+from time import gmtime
 from collections import namedtuple
 import tempfile
 import json
@@ -110,26 +110,25 @@ class ArchiveXmlRpcExporter(object):
             self._keys = dict((x['name'], x['key']) for x in self.server.archiver.archives())
         return self._keys[source]
 
-    def _partial_retrieve(self, source, channel, start, end, prev_sample = None):
+    def _partial_retrieve(self, source, channel, start, end):
         sstart, send = tosecondstimestamp(start), tosecondstimestamp(end)
         ret = self.server.archiver.values(self.get_key(source), [channel],
                                           int(sstart), int(sstart - int(sstart))*1000000000,
                                           int(send), int(send - int(send))*1000000000,
                                           ARCHIVE_MAX_XMLRPC_SAMPLES, 0)[0]['values']
         if len(ret) > 0:
-            if split_timestamp_to_dt(ret[0]) == prev_sample:
-                ret = ret[1:]
-            for sample in ret:
-                yield (split_timestamp_to_dt(sample),) + tuple(sample['value'])
+            return [(split_timestamp_to_dt(sample),) + tuple(sample['value']) for sample in ret]
 
     def retrieve(self, source, channel, start, end):
-        t1 = mktime(start.timetuple())
-        t2 = mktime(end.timetuple())
+        t1 = tosecondstimestamp(start)
+        t2 = tosecondstimestamp(end)
         done = False
         latest_timestamp = None
         while not done:
-            samples = list(self._partial_retrieve(source, channel, t1, t2, latest_timestamp))
+            samples = self._partial_retrieve(source, channel, t1, t2)
             for sample in samples:
+                if latest_timestamp and sample[0] <= latest_timestamp:
+                    continue
                 yield sample
             if len(samples) < ARCHIVE_MAX_XMLRPC_SAMPLES or tosecondstimestamp(samples[-1][0]) >= t2:
                 done = True
