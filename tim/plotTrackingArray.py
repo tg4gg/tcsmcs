@@ -36,6 +36,11 @@ EXEC_TIME_MODE = 'execTime'
 POS_DIFF_MODE = 'posDiff' #shortcut for rawDiff -cols 4,5
 PERIOD_MODE = 'period'
 RAW_MODE = 'raw'
+RAW_DIFF_MODE = 'rawDiff'
+CAMON_MODE = 'camon'
+CAMON_DIFF_MODE = 'camonDiff'
+
+
 
 FollowArray = namedtuple('FollowArray', 'timestamp now targetTime trackId azPos elPos diff')
 ZoneArray = namedtuple('ZoneArray', 'title begin end color')
@@ -64,6 +69,10 @@ def parse_args():
     parser.add_argument('-sys',    '--system',           dest='system',            default='tcs', help='System to be analyzed: tcs, mcs or both')
     parser.add_argument('-date',    '--date',           dest='date',            default=enableDebugDate, help='Date - format YYYY-MM-DD')
     parser.add_argument('-day',   '--eng_mode',        dest='eng_mode',          action='store_true', help='If used daytime will be analyzed 6am-6pm')
+    parser.add_argument('-scale',   '--scale',        dest='scale',  type=float,  default=1.0, help='Scale to be applied to data')
+    parser.add_argument('-cols',   '--columns',        dest='cols',          default='4,5', help='Columns to be plotted')
+    
+    
     parser.add_argument('-mode',   '--plot_mode',               dest='mode',          default=EXEC_TIME_MODE,
                         help='Different ways of representing the data, could be: {0}, {1} or {2}'.format(EXEC_TIME_MODE, POS_DIFF_MODE, PERIOD_MODE))
 
@@ -227,7 +236,7 @@ def plotPeriod():
     ax1.plot(periodTime, periodVal, "b.", markersize=MARKERSIZE)
     ax1.grid(True)
     ax1.tick_params("y", colors="b")
-    ax1.set_ylabel("timeNow - previous timeNow (milliseconds)", color="b")
+    ax1.set_ylabel("timeNow - previous timeNow (milliseconds)", color="b")   
     
     #if outliersInPeriod > 0:
         #ax1.set_ylim(*periodLimits)
@@ -251,12 +260,66 @@ def plotPeriod():
     plt.gcf().autofmt_xdate()
     plt.show()
 
+
+def getIndexes(indexStr):
+    elements = indexStr.split(",")
+    i = int(elements[0])
+    if len(elements) > 1 :
+        j = int(elements[1])
+    else:
+        j = 0
+    return i,j
+    
+def plotRaw(diff=False):
+    '''
+    Plots the data as it is, if diff flag is true it subtracts 2 consecutive
+    values. [a b c] diff >> [b-a c-b]
+    '''
+    flw_producer = producer(args.data_path)
+    i,j = getIndexes(args.cols)
+    
+    timeBase, aLst, bLst = list(), list(), list()
+    for dp in flw_producer:
+        timeBase.append(dp.timestamp)
+        aLst.append(dp[i]*args.scale)
+        if j > 1:
+            bLst.append(dp[j]*args.scale)
+            
+    if diff:
+        aLst = np.diff(np.array(aLst))
+        bLst = np.diff(np.array(bLst))
+        timeBase = timeBase[1:]
+
+#Plotting starts here
+    fig, ax1 = plt.subplots()   
+    plt.title("Title to be defined by the user, date:{1}".format(args.system, args.date))
+    ax1.plot(timeBase, aLst, "b.", markersize=MARKERSIZE)
+    ax1.grid(True)
+    ax1.tick_params("y", colors="b")
+    ax1.set_ylabel("To be defined by the user", color="b")
+    
+    if j > 1:
+        ax2 = ax1.twinx()
+        ax2.plot(timeBase, bLst, "r.-", markersize=MARKERSIZE)
+        ax2.tick_params("y", colors="r")
+        ax2.set_ylabel("TBD", color="r")
+    
+    addZones(ax1, timeBase[0], timeBase[-1])
+    plt.gcf().autofmt_xdate()
+    plt.show()
+
+ 
+
 # -----------------------------------------------------------------------------
 # ------------------------------------ MAIN -----------------------------------
 # -----------------------------------------------------------------------------
 args = parse_args()
 
 if args.mode == EXEC_TIME_MODE :
+    '''
+    Here we plot the time that is left until execution time (time before target)
+    you can chooose between tcs, mcs or both.
+    '''
     
     flw_producer = producer(args.data_path)
     
@@ -342,17 +405,10 @@ elif args.mode == POS_DIFF_MODE:
     plt.show()
     
 elif args.mode == RAW_MODE:
-    flw_producer = producer(args.data_path)
-    elements = args.cols.split(",")
-    
-    timeBase, aLst, bLst = list(), list(), list()
-    for dp in flw_producer:
-        timeBase.append(dp.timestamp)
-        aLst.append(elements[0])
-        if len(elements) > 1:
-            bLst.append(elements[1])
-            
-    fig, ax1 = plt.sublplots()
+    plotRaw()
+
+elif args.mode == RAW_DIFF_MODE:
+    plotRaw(True)
 
 elif args.mode == PERIOD_MODE:
    plotPeriod()
