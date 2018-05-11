@@ -19,6 +19,8 @@ from collections import namedtuple
 import tempfile
 import json
 
+json.encoder.FLOAT_REPR = lambda o: format(o, '.9f')
+
 ARCHIVE_MAX_XMLRPC_SAMPLES = 10000
 ARCHIVE_EXPORTER = '/gemsoft/opt/epics/extensions/bin/linux-x86_64/ArchiveExport'
 ARCHIVE_EXPORT_DATA_PATH = '/gemsoft/var/data/gea/data/data/{source}/master_index'
@@ -169,6 +171,18 @@ def tosecondstimestamp(dt):
         return dt.astype(int) / 1000000000.
     return dt
 
+def todatetime64(dt):
+    if isinstance(dt, datetime):
+        return np.datetime64(dt, 'ns')
+    elif isinstance(dt, float):
+        nt = int(dt)
+        fr = int(round((dt - nt) * 1000000000))
+        return np.datetime64((nt * 1000000000) + fr, 'ns')
+    elif isinstance(dt, int):
+        return np.datetime64(int(dt * 1000000000), 'ns')
+    # NOTE: Assume that we got a datetime64 instance...
+    return dt
+
 class CacheFile(object):
     def __init__(self, cache_manager):
         self._cm = cache_manager
@@ -183,7 +197,7 @@ class CacheFile(object):
             if self._first is not None:
                 self._cm.add_file(self._file.name, self._first, self._last, to_group=self._group)
             else:
-                os.remove(self._file)
+                os.remove(self._file.name)
 
     def _reset_file(self):
         self._file = self._cm.create_temp_file()
@@ -221,8 +235,13 @@ class CacheFile(object):
                 self._reset_file()
             self._group = group
 
+class CacheJsonEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.datetime64):
+            return tosecondstimestamp(obj)
+
 IntervalIndexEntry = namedtuple('IntervalIndexEntry', 'start end files')
-RawIndexEntry = namedtuple('RawIndexEntry', 'name start end')
+RawIndexEntry = namedtuple('RawIndexEntry', 'start end name')
 
 class RawCacheManager(object):
     def __init__(self, root_dir, site, db, pvname):
@@ -244,13 +263,14 @@ class RawCacheManager(object):
         if intervals is not None:
             json.dump(
                     fp=open(self.cache_file, 'w'),
+                    cls=CacheJsonEncoder,
                     indent=2,
                     obj=[{"_comment": "Data {0} - {1}".format(isoformat(g.start), isoformat(g.end)),
-                          "start": tosecondstimestamp(g.start),
-                          "end": tosecondstimestamp(g.end),
+                          "start": g.start,
+                          "end": g.end,
                           "files": [{"name": os.path.basename(i.name),
-                                     "start": tosecondstimestamp(i.start),
-                                     "end": tosecondstimestamp(i.end)}
+                                     "start": i.start,
+                                     "end": i.end}
                                     for i in g.files]}
                          for g in intervals]
                     )
@@ -261,13 +281,13 @@ class RawCacheManager(object):
             for group in json.load(open(self.cache_file)):
                 result.append(
                         IntervalIndexEntry(
-                            start=datetime.utcfromtimestamp(group['start']),
-                            end  =datetime.utcfromtimestamp(group['end']),
+                            start=todatetime64(group['start']),
+                            end  =todatetime64(group['end']),
                             files=tuple(
                                 RawIndexEntry(
                                     name =r['name'],
-                                    start=datetime.utcfromtimestamp(r['start']),
-                                    end  =datetime.utcfromtimestamp(r['end']))
+                                    start=todatetime64(r['start']),
+                                    end  =todatetime64(r['end']))
                                 for r in group['files'])))
             return result
         except (IOError, OSError):
@@ -296,9 +316,34 @@ class RawCacheManager(object):
             c2 = interval.start <= end <= interval.end
             c3 = start <= interval.start and interval.end <= end
             if c1 or c2 or c3:
-                result.append(interval.name)
+                result.append(interval)
 
-        return [os.path.join(self.cache_dir, fn) for fn in result]
+        return result
+
+    def get_difference(self, start, end, refresh=False):
+        intersec = self.get_intersection(start, end, refresh)
+        if not intersec:
+            return [(start, end)]
+        else:
+            result = []
+            if start < intersec[0].start:
+                result.append((start, intersec[0].start))
+            start = intersec[0].end
+            interval = None
+            for interval in intersec[1:]:
+                if interval.start > end:
+                    result.append((start, end))
+                    break
+                if interval.start != start:
+                    result.append((start, interval.start))
+                start = interval.end
+            else:
+                if interval is None:
+                    if end > intersec[0].end:
+                        result.append((intersec[0].end, end))
+                elif end > interval.end:
+                    result.append((interval.end, end))
+            return result
 
     def get_file_name(self, start, end, full_path=False):
         fname = "{0}_{1}".format(isoformat(start), isoformat(end))
@@ -318,14 +363,15 @@ class RawCacheManager(object):
     def add_to_index(self, path, start, end, to_group=None):
         # TODO: This function should make sure that the intervals do not overlap
         #       but we're going to assume it so far.
-        new_entry = RawIndexEntry(path, start, end)
+        new_entry = RawIndexEntry(name=path, start=start, end=end)
         interval_set = set(self.get_intervals(refresh=False))
 
         if to_group is None:
             new_group = IntervalIndexEntry(start=start, end=end, files=(new_entry,))
         else:
-            new_group = IntervalIndexEntry(start=min(f.start for f in to_group.files),
-                                           end=max(f.end for f in to_group.files),
+            new_files = files=tuple(sorted(to_group.files + (new_entry,)))
+            new_group = IntervalIndexEntry(start=min(f.start for f in new_files),
+                                           end=max(f.end for f in new_files),
                                            files=tuple(sorted(to_group.files + (new_entry,))))
             interval_set.remove(to_group)
         interval_set.add(new_group)
@@ -366,14 +412,19 @@ class DataManager(object):
                   affected by `cache_data`, overlapping queries are stored separately,
                   in full. By default, this argument is `False`.
         """
-        # def retrieve(self, source, channel, start, end):
         if db is None:
             db = map_pv_to_db(pvname)
 
+        start = todatetime64(start)
+        end = todatetime64(end)
+
         rcm = RawCacheManager(self.root, self.exp.site, db, pvname)
-        with rcm.new_file() as dest:
-            for entry in self.exp.retrieve(db, pvname, start, end):
-                dest.write(entry[0], entry[1:])
+        intervals = rcm.get_difference(start, end)
+        if intervals:
+            for (istart, iend) in intervals:
+                with rcm.new_file() as dest:
+                    for entry in self.exp.retrieve(db, pvname, istart, iend):
+                        dest.write(entry[0], entry[1:])
 
 def get_exporter(source):
     """
@@ -387,15 +438,7 @@ def get_exporter(source):
         return ArchiveFileExporter(source)
 
 if __name__ == '__main__':
-    # archive_export('mcs', 'mc:azDemandPos', start=datetime(2018, 5, 4), end=datetime(2018, 5, 4, 6), output='/tmp/azDemandPos.txt', site='MK', overwrite=True)
     # TEST CODE
-    #import random
-    #from datetime import timedelta
-    #rcm = RawCacheManager('/tmp/rcm', 'MK', 'mcs', 'mcs:foo.bar')
-    #now = datetime.now()
-    #td = timedelta(microseconds=100000)
-    #with rcm.new_file() as dest:
-    #    for stamp, value in ((now + td*n, 15 + (0.5 - random.random())) for n in range(15000)):
-    #        dest.write(stamp, [value])
     dm = DataManager(get_exporter('MK'), root_dir='/tmp/rcm')
     data = dm.getData('mc:azDemandPos', start=datetime(2018, 5, 4), end=datetime(2018, 5, 4, 6))
+    data = dm.getData('mc:azDemandPos', start=datetime(2018, 5, 4), end=datetime(2018, 5, 4, 6, 10))
