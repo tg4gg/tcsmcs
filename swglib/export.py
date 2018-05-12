@@ -120,6 +120,8 @@ class ArchiveXmlRpcExporter(object):
                                           ARCHIVE_MAX_XMLRPC_SAMPLES, 0)[0]['values']
         if len(ret) > 0:
             return [(split_timestamp_to_dt(sample),) + tuple(sample['value']) for sample in ret]
+        else:
+            return []
 
     def retrieve(self, source, channel, start, end):
         t1 = tosecondstimestamp(start)
@@ -440,5 +442,6 @@ def get_exporter(source):
 if __name__ == '__main__':
     # TEST CODE
     dm = DataManager(get_exporter('MK'), root_dir='/tmp/rcm')
-    data = dm.getData('mc:azDemandPos', start=datetime(2018, 5, 4), end=datetime(2018, 5, 4, 6))
-    data = dm.getData('mc:azDemandPos', start=datetime(2018, 5, 4), end=datetime(2018, 5, 4, 6, 10))
+    data = dm.getData('mc:azDemandPos', start=datetime(2018, 5, 4), end=datetime(2018, 5, 4, 6))      # Initial bulk download
+    data = dm.getData('mc:azDemandPos', start=datetime(2018, 5, 4), end=datetime(2018, 5, 4, 6, 10))  # Incremental download
+    data = dm.getData('mc:azDemandPos', start=datetime(2018, 5, 5), end=datetime(2018, 5, 4, 6, 30))  # No download (start > end)
