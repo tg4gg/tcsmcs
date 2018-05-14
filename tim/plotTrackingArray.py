@@ -34,6 +34,8 @@ MCS_CA = 'mc:followA.J'
 # Modes
 EXEC_TIME_MODE = 'execTime'
 POS_DIFF_MODE = 'posDiff' #shortcut for rawDiff -cols 4,5
+VEL_MODE = 'vel'
+
 PERIOD_MODE = 'period'
 RAW_MODE = 'raw'
 RAW_DIFF_MODE = 'rawDiff'
@@ -71,6 +73,8 @@ def parse_args():
     parser.add_argument('-day',   '--eng_mode',        dest='eng_mode',          action='store_true', help='If used daytime will be analyzed 6am-6pm')
     parser.add_argument('-scale',   '--scale',        dest='scale',  type=float,  default=1.0, help='Scale to be applied to data')
     parser.add_argument('-cols',   '--columns',        dest='cols',          default='4,5', help='Columns to be plotted')
+    parser.add_argument('-axis',   '--axis',        dest='axis',          default='az', help='Axis to be plotted, can be az or el')
+    
     
     
     parser.add_argument('-mode',   '--plot_mode',               dest='mode',          default=EXEC_TIME_MODE,
@@ -198,7 +202,12 @@ def addZones(ax, begin, end):
     for ii, za in enumerate(markedZones):
         ax.axvspan(za.begin, za.end, facecolor=za.color, label=za.title, alpha=0.3)
     
-    ax.legend(loc=LEGEND_LOCATION)
+    #ax.legend(loc=LEGEND_LOCATION)
+    box = ax.get_position()
+    ax.set_position([box.x0, box.y0, box.width * 0.8, box.height])
+
+# Put a legend to the right of the current axis
+    ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
     
 def plotPeriod():
     """
@@ -308,53 +317,7 @@ def plotRaw(diff=False):
     plt.gcf().autofmt_xdate()
     plt.show()
 
- 
-
-# -----------------------------------------------------------------------------
-# ------------------------------------ MAIN -----------------------------------
-# -----------------------------------------------------------------------------
-args = parse_args()
-
-if args.mode == EXEC_TIME_MODE :
-    '''
-    Here we plot the time that is left until execution time (time before target)
-    you can chooose between tcs, mcs or both.
-    '''
-    
-    flw_producer = producer(args.data_path)
-    
-    diff_lst = list()
-    for dp in flw_producer:
-        #print dp.targetTime-dp.now
-        diff_lst.append((dp.timestamp, dp.diff.total_seconds()))
-    
-    diffTime,diffVal=zip(*diff_lst)
-    
-    fig, ax1 = plt.subplots()   
-    plt.title("TCS-MCS Communication Analysis: {0} data from {1}\n Time before target time".format(args.system, args.date))
-    ax1.plot(diffTime, diffVal, "b.", markersize=MARKERSIZE)
-    ax1.grid(True)
-    #ax1.set_ylim([-0.05,0.05])
-    #ax1.set_yticks(np.arange(-0.05, 0.05, step=0.005))
- 
-    if args.system == 'both':
-        flw_producer2 = producer(args.tcs_data_path)
-        #TODO: Fix legend issues when plotting both subsystems
-        diff_lst2 = list()
-        for dp in flw_producer2:
-            diff_lst2.append((dp.timestamp, dp.diff.total_seconds()))
-    
-        diffTime2,diffVal2=zip(*diff_lst2)    
-    
-        #ax2 = ax1.twinx()
-        ax1.plot(diffTime2, diffVal2, "r.", markersize=MARKERSIZE)
-        plt.gca().legend((MCS_SYSTEM+' entry', TCS_SYSTEM+' exit'))
-    
-    addZones(ax1, diffTime[0],diffTime[-1])
-    plt.gcf().autofmt_xdate()
-    plt.show()
-
-elif args.mode == POS_DIFF_MODE:
+def plotPosDiff():
     flw_producer = producer(args.data_path)
 
     firstVal = flw_producer.next()
@@ -403,6 +366,115 @@ elif args.mode == POS_DIFF_MODE:
     addZones(ax1, azTime[0],azTime[-1])
     plt.gcf().autofmt_xdate()
     plt.show()
+
+def plotVel():
+    '''
+    Here the calculated velocity vs the raw position difference is plotted
+    in 2 subplots sharing the X axis
+    '''
+    AZ = 'az'
+    plotAz = True if args.axis == AZ else False
+       
+    flw_producer = producer(args.data_path)
+
+    firstVal = flw_producer.next()
+    outliersInPeriod = 0
+    periodLimits = Limits(-0.1,0.7)
+    prevPos = firstVal.azPos if plotAz else firstVal.elPos
+    posIndex = 4 if plotAz else 5
+    prevTimestamp = firstVal.targetTime
+    posDiff_lst, vel_lst, timebase = list(), list(), list()
+    for dp in flw_producer:
+        tBetweenSamples = (dp.targetTime-prevTimestamp).total_seconds()
+        if (tBetweenSamples <= 0.0):
+            print "Time diff is zero or below: {0}, ignoring values {1}".format(tBetweenSamples, dp.timestamp)
+        else:
+            posDiff_lst.append((prevPos - dp[posIndex])*3600.0)
+            vel = (prevPos - dp[posIndex])/tBetweenSamples
+            vel_lst.append(vel*3600.0)
+            timebase.append(dp.targetTime)
+        prevPos = dp[posIndex]
+        prevTimestamp = dp.targetTime
+        if tBetweenSamples > periodLimits.upper or tBetweenSamples < periodLimits.lower:
+            print "Period out of limits: {0} on date: {1}".format(tBetweenSamples, dp.timestamp)
+            outliersInPeriod += 1
+            
+    print "Last read line with date:", dp.timestamp
+    
+   
+
+    ax1 = plt.subplot(211)
+    plt.title("TCS-MCS Pos./Vel. Analysis: {0} data from {1} - axis:{2}".format(args.system, args.date, args.axis))
+    ax1.plot(timebase, posDiff_lst, "r.-", markersize=MARKERSIZE)
+    ax1.grid(True)
+    ax1.tick_params("y", colors="r")
+    ax1.set_ylabel("Raw pos. diff [as]", color="r")
+    ax1.set_ylim(-10, 10)
+
+    ax2 = plt.subplot(212, sharex=ax1)
+    ax2.plot(timebase, vel_lst, "b.-", markersize=MARKERSIZE)
+    ax2.grid(True)
+    ax2.tick_params("y", colors="b")
+    ax2.set_ylabel("Calculated vel. [as/s]", color="b")
+    ax2.set_ylim(-10, 10)
+    
+    print "Number of detected period outliers: {0}".format(outliersInPeriod)
+    print "Watch out: plot ylim set to -10 , 10 some information may not be shown on the graph" #TODO: At least count samples left out and report
+
+    addZones(ax1, timebase[0],timebase[-1])
+    addZones(ax2, timebase[0],timebase[-1])
+
+    #ax2.xaxis.set_major_formatter(matplotlib.dates.DateFormatter("%d/%m %H:%M:%S.%f"))
+
+    plt.gcf().autofmt_xdate()
+    plt.show()    
+
+# -----------------------------------------------------------------------------
+# ------------------------------------ MAIN -----------------------------------
+# -----------------------------------------------------------------------------
+args = parse_args()
+
+if args.mode == EXEC_TIME_MODE :
+    '''
+    Here we plot the time that is left until execution time (time before target)
+    you can chooose between tcs, mcs or both.
+    '''
+    
+    flw_producer = producer(args.data_path)
+    
+    diff_lst = list()
+    for dp in flw_producer:
+        #print dp.targetTime-dp.now
+        diff_lst.append((dp.timestamp, dp.diff.total_seconds()))
+    
+    diffTime,diffVal=zip(*diff_lst)
+    
+    fig, ax1 = plt.subplots()   
+    plt.title("TCS-MCS Communication Analysis: {0} data from {1}\n Time before target time".format(args.system, args.date))
+    ax1.plot(diffTime, diffVal, "b.", markersize=MARKERSIZE)
+    ax1.grid(True)
+    #ax1.set_ylim([-0.05,0.05])
+    #ax1.set_yticks(np.arange(-0.05, 0.05, step=0.005))
+ 
+    if args.system == 'both':
+        flw_producer2 = producer(args.tcs_data_path)
+        #TODO: Fix legend issues when plotting both subsystems
+        diff_lst2 = list()
+        for dp in flw_producer2:
+            diff_lst2.append((dp.timestamp, dp.diff.total_seconds()))
+    
+        diffTime2,diffVal2=zip(*diff_lst2)    
+    
+        #ax2 = ax1.twinx()
+        ax1.plot(diffTime2, diffVal2, "r.", markersize=MARKERSIZE)
+        plt.gca().legend((MCS_SYSTEM+' entry', TCS_SYSTEM+' exit'))
+    
+    addZones(ax1, diffTime[0],diffTime[-1])
+    plt.gcf().autofmt_xdate()
+    plt.show()
+
+elif args.mode == POS_DIFF_MODE:
+    plotPosDiff()
     
 elif args.mode == RAW_MODE:
     plotRaw()
@@ -412,6 +484,11 @@ elif args.mode == RAW_DIFF_MODE:
 
 elif args.mode == PERIOD_MODE:
    plotPeriod()
+   
+
+elif args.mode == VEL_MODE:
+    plotVel()
+   
    
 else:
     print "Mode not found, check spelling"
