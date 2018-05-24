@@ -183,7 +183,7 @@ ax1.grid(True)
 ax1.tick_params("y", colors="b")
 #ax1.set_ylabel("Time between executions (targetTime)", color="b")
 ax1.set_ylabel("Azimuth difference between samples (not respecting timestamp - velocity)", color="b")
-ax1.set_ylim(-10, 10)
+#ax1.set_ylim(-10, 10)
 #if outliersInPeriod > 0:
 #    ax1.set_ylim(*periodLimits)
 #    print "Fixed scaling due to outliers"
@@ -203,12 +203,13 @@ if True: #Plot also diffs
     ax2.tick_params("y", colors="r")
     ax2.set_ylabel("Elevation", color="r")
     #ax2.set_ylabel("Execution time + forward time (targetTime-now)", color="r")
-    ax2.set_ylim(-10, 10)
+    #ax2.set_ylim(-10, 10)
     date="2018-04-24 "
     errPeriods = [  ("12:25:31", "12:33:59"),
                     ("12:40:37", "12:45:20"),
                     ("14:10:36", "14:17:25"),
                     ("14:22:28", "14:30:33")]
+    errPeriods = []
 
     for err in errPeriods:
         when = datetime.strptime(date+err[0], "%Y-%m-%d %H:%M:%S")

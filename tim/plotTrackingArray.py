@@ -17,9 +17,13 @@ import csv
 import matplotlib.pyplot as plt
 import numpy as np
 import pdb
-
 import os
 
+sys.path.append('../')
+from swglib.export import DataManager, get_exporter
+
+ENABLE_CACHING = False
+    
 LEGEND_LOCATION = 'lower left'
 TZ = 'America/Santiago'
 PLOT_ZONE_FILE = './zones.cfg'
@@ -50,8 +54,8 @@ Limits = namedtuple('Limits', 'lower upper')
 
 
 # Site should be either 'cp' or 'mk'
-SITE = 'cp'
-if SITE == 'cp':
+SITE = 'CP'
+if SITE == 'CP':
     # directory where the data is located
     root_data_dir = '/archive/tcsmcs/data'
     if not os.path.exists(root_data_dir):
@@ -74,6 +78,7 @@ def parse_args():
     parser.add_argument('-scale',   '--scale',        dest='scale',  type=float,  default=1.0, help='Scale to be applied to data')
     parser.add_argument('-cols',   '--columns',        dest='cols',          default='4,5', help='Columns to be plotted')
     parser.add_argument('-axis',   '--axis',        dest='axis',          default='az', help='Axis to be plotted, can be az or el')
+    parser.add_argument('-time',   '--time_range',        dest='time_rng',    default=None, help='Specific time range format: HH:MM-HH:MM')
     
     
     
@@ -82,47 +87,52 @@ def parse_args():
 
     args = parser.parse_args()
 
-    day_str = "day_" if args.eng_mode else ""
-    system = MCS_SYSTEM
-    PV = MCS_CA
-    if args.system == 'tcs':
-        system = TCS_SYSTEM
-        PV = TCS_CA
-
-    #Get directory name
-    pvdir = PV[PV.find(':')+1:].replace(':','_')
+    if ENABLE_CACHING: #Uses swglib
+        if args.eng_mode:
+            args.time_rng = '800-2000'
+        else:
+            if not args.time_rng:
+                args.time_rng = '2000-0800'
+    else:
+        day_str = "day_" if args.eng_mode else ""
+        system = MCS_SYSTEM
+        PV = MCS_CA
+        if args.system == 'tcs':
+            system = TCS_SYSTEM
+            PV = TCS_CA
     
-    #Construct the path to the data    
-    args.data_path = os.path.join(
-            root_data_dir, SITE, system,
-            pvdir, 
-            'txt', 
-            '{0}_{1}_{2}_{3}export.txt'.format(args.date, SITE, PV.replace(':','-'), day_str)
-        )
-
-    if args.system == 'both':
-        #Construct the path to the TCS data
-        system = TCS_SYSTEM
-        PV = TCS_CA
+        #Get directory name
         pvdir = PV[PV.find(':')+1:].replace(':','_')
-        args.tcs_data_path = os.path.join(
-            root_data_dir, SITE, system,
-            pvdir, 
-            'txt', 
-            '{0}_{1}_{2}_{3}export.txt'.format(args.date, SITE, PV.replace(':','-'), day_str)
-        )
-
-
-    if (args.date == enableDebugDate):
-        print "DEBUG MODE ENABLED -\_(\")_/-"
-        args.data_path = (
-            args.data_path.replace(enableDebugDate, "2018-04-08")
-                .replace(".txt", "_test.txt")
+        
+        #Construct the path to the data    
+        args.data_path = os.path.join(
+                root_data_dir, SITE, system,
+                pvdir, 
+                'txt', 
+                '{0}_{1}_{2}_{3}export.txt'.format(args.date, SITE, PV.replace(':','-'), day_str)
             )
     
-      
+        if args.system == 'both':
+            #Construct the path to the TCS data
+            system = TCS_SYSTEM
+            PV = TCS_CA
+            pvdir = PV[PV.find(':')+1:].replace(':','_')
+            args.tcs_data_path = os.path.join(
+                root_data_dir, SITE, system,
+                pvdir, 
+                'txt', 
+                '{0}_{1}_{2}_{3}export.txt'.format(args.date, SITE, PV.replace(':','-'), day_str)
+            )
+    
+    
+        if (args.date == enableDebugDate):
+            print "DEBUG MODE ENABLED -\_(\")_/-"
+            args.data_path = (
+                args.data_path.replace(enableDebugDate, "2018-04-08")
+                    .replace(".txt", "_test.txt")
+                )                  
 
-    print "Reading: {0}".format(args.data_path)
+        print "Reading: {0}".format(args.data_path)
     return args
 
 
@@ -154,6 +164,23 @@ def insideRange(begin, end, zone):
     
 
 
+def getTimes(dateStr, timeRangeStr):
+    try:
+        beginT, endT = timeRangeStr.split('-')
+        beginH, beginM = beginT[:-2], beginT[-2:]
+        endH, endM = endT[:-2], endT[-2:]
+        begin = strptimeTz(dateStr+' '+beginH+':'+beginM+':00')
+        end = strptimeTz(dateStr+' '+endH+':'+endM+':00')
+        if end < begin:
+            end = end + timedelta(days=1)
+        return begin, end
+    except Exception as ex:
+        print 'Wrong format for timerange, must be: HHMM-HHMM'
+        print ex
+        raise
+        
+    
+
 """
 Timestamp
 ** Element 0  = time now
@@ -178,7 +205,31 @@ def producer(filename):
             yield FollowArray(receptionTime, generationTime,\
                  targetTime,  fromtimestampTz(float(row[3])), float(row[4]), float(row[5]), targetTime-receptionTime \
                  )
+            
+def producerH(pv, dateStr, timeRangeStr):
+    
+    begin, end = getTimes(dateStr, timeRangeStr)
+    print 'Times:', begin, end
+    dm = DataManager(get_exporter(SITE), root_dir='/tmp/rcm')
+    data = dm.getData(TCS_CA, begin, end)
+    #TODO: Return generator
+    #TODO: Implement timezone awareness on the swglib side
+    
+    '''with open(filename) as source:
+        reader = csv.reader(source, delimiter='\t')
+        # Skip the headers
+        next(reader); next(reader); next(reader); next(reader)
 
+        for row in reader:
+            if row[0].startswith('#') or row[1].startswith('#'):
+                continue
+            generationTime = fromtimestampTz(float(row[1]))
+            receptionTime = strptimeTz(row[0][:-3], True)
+            targetTime = fromtimestampTz(float(row[2]))
+            yield FollowArray(receptionTime, generationTime,\
+                 targetTime,  fromtimestampTz(float(row[3])), float(row[4]), float(row[5]), targetTime-receptionTime \
+                 )
+'''
 def readZonesFromFile(begin, end):
     markedZones = []
     try:
@@ -375,6 +426,10 @@ def plotVel():
     AZ = 'az'
     plotAz = True if args.axis == AZ else False
        
+    if ENABLE_CACHING:
+        producerH(TCS_CA, args.date, args.time_rng)
+        sys.exit()
+
     flw_producer = producer(args.data_path)
 
     firstVal = flw_producer.next()
@@ -402,7 +457,7 @@ def plotVel():
     print "Last read line with date:", dp.timestamp
     
    
-
+    fig, ax1 = plt.subplots() 
     ax1 = plt.subplot(211)
     plt.title("TCS-MCS Pos./Vel. Analysis: {0} data from {1} - axis:{2}".format(args.system, args.date, args.axis))
     ax1.plot(timebase, posDiff_lst, "r.-", markersize=MARKERSIZE)
@@ -416,7 +471,7 @@ def plotVel():
     ax2.grid(True)
     ax2.tick_params("y", colors="b")
     ax2.set_ylabel("Calculated vel. [as/s]", color="b")
-    ax2.set_ylim(-10, 10)
+    ax2.set_ylim(-30, 30)
     
     print "Number of detected period outliers: {0}".format(outliersInPeriod)
     print "Watch out: plot ylim set to -10 , 10 some information may not be shown on the graph" #TODO: At least count samples left out and report
