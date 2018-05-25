@@ -387,9 +387,37 @@ class RawCacheManager(object):
             path = newfn
         self.add_to_index(path, start, end, to_group=to_group)
 
+    def iterate_index(self, index_entry):
+        if not isinstance(index_entry, IntervalIndexEntry):
+            raise TypeError("Not an IntervalIndexEntry")
+        for raw_entry in index_entry.files:
+            with open(os.path.join(self.cache_dir, raw_entry.name)) as source:
+                for line in source:
+                    entry = line.strip().split()
+                    yield (np.datetime64(entry[0], 'ns'),) + tuple(float(x) for x in entry[1:])
+
 def map_pv_to_db(pvname):
     key = (pvname.split(':') if ':' in pvname else pvname.split('.'))[0]
     return ARCHIVE_MAPPING[key]
+
+def sorted_zip(*args):
+    candidates = []
+    for arg in args:
+        it = iter(arg)
+        try:
+            candidates.append((it.next(), it))
+        except StopIteration:
+            pass
+
+    while candidates:
+        candidates = list(reversed(candidates))
+        next_item, it = candidates.pop()
+        yield next_item
+        try:
+            candidates.append((it.next(), it))
+        except StopIteration:
+            pass
+
 
 class DataManager(object):
     def __init__(self, exporter, root_dir=None):
@@ -421,12 +449,20 @@ class DataManager(object):
         end = todatetime64(end)
 
         rcm = RawCacheManager(self.root, self.exp.site, db, pvname)
-        intervals = rcm.get_difference(start, end)
-        if intervals:
-            for (istart, iend) in intervals:
+        # Gather missing intervals
+        overlap = rcm.get_intersection(start, end)
+        difference = rcm.get_difference(start, end)
+        for interval in sorted_zip(overlap, difference):
+            if isinstance(interval, IntervalIndexEntry):
+                for entry in rcm.iterate_index(interval):
+                    if start <= entry[0] <= end:
+                        yield entry
+            else:
+                istart, iend = interval
                 with rcm.new_file() as dest:
                     for entry in self.exp.retrieve(db, pvname, istart, iend):
                         dest.write(entry[0], entry[1:])
+                        yield entry
 
 def get_exporter(source):
     """
@@ -442,6 +478,8 @@ def get_exporter(source):
 if __name__ == '__main__':
     # TEST CODE
     dm = DataManager(get_exporter('MK'), root_dir='/tmp/rcm')
-    data = dm.getData('mc:azDemandPos', start=datetime(2018, 5, 4), end=datetime(2018, 5, 4, 6))      # Initial bulk download
-    data = dm.getData('mc:azDemandPos', start=datetime(2018, 5, 4), end=datetime(2018, 5, 4, 6, 10))  # Incremental download
-    data = dm.getData('mc:azDemandPos', start=datetime(2018, 5, 5), end=datetime(2018, 5, 4, 6, 30))  # No download (start > end)
+    data = list(dm.getData('mc:azDemandPos', start=datetime(2018, 5, 4), end=datetime(2018, 5, 4, 6)))      # Initial bulk download
+    data = list(dm.getData('mc:azDemandPos', start=datetime(2018, 5, 4), end=datetime(2018, 5, 4, 6, 10)))  # Incremental download
+    data = list(dm.getData('mc:azDemandPos', start=datetime(2018, 5, 5), end=datetime(2018, 5, 4, 6, 30)))  # No download (start > end)
+    for data in dm.getData('mc:azDemandPos', start=datetime(2018, 5, 4, 6, 5), end=datetime(2018, 5, 4, 6, 35)):
+        print data
