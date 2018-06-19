@@ -15,6 +15,8 @@ import argparse
 import sys
 import csv
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+import matplotlib
 import numpy as np
 import pdb
 import os
@@ -22,12 +24,12 @@ import os
 sys.path.append('../')
 from swglib.export import DataManager, get_exporter
 
-ENABLE_CACHING = False
+ENABLE_CACHING = False #TODO: Enable sample set for caching
     
 LEGEND_LOCATION = 'lower left'
 TZ = 'America/Santiago'
 PLOT_ZONE_FILE = './zones.cfg'
-MARKERSIZE = 0.5
+MARKERSIZE = 2.5
 
 
 TCS_SYSTEM = 'tcs'
@@ -54,8 +56,8 @@ Limits = namedtuple('Limits', 'lower upper')
 
 
 # Site should be either 'cp' or 'mk'
-SITE = 'CP'
-if SITE == 'CP':
+SITE = 'cp'
+if SITE == 'cp':
     # directory where the data is located
     root_data_dir = '/archive/tcsmcs/data'
     if not os.path.exists(root_data_dir):
@@ -145,6 +147,13 @@ def strptimeTz(dateStr, US=False):
     else:
         when = datetime.strptime(dateStr, '%Y-%m-%d %H:%M:%S')
     return timezone.localize(when)
+    
+def localizeNp64Tz(np64dt):
+    """
+    Converts from numpy.datetime64 to standard datetime with TZ
+    """
+    ts = (np64dt - np.datetime64('1970-01-01T00:00:00Z')) / np.timedelta64(1, 's')
+    return fromtimestampTz(ts)
 
 """
 If part of the zone is inside the range adjust limits
@@ -210,8 +219,16 @@ def producerH(pv, dateStr, timeRangeStr):
     
     begin, end = getTimes(dateStr, timeRangeStr)
     print 'Times:', begin, end
-    dm = DataManager(get_exporter(SITE), root_dir='/tmp/rcm')
+    dm = DataManager(get_exporter(SITE.upper()), root_dir='/tmp/rcm') 
     data = dm.getData(TCS_CA, begin, end)
+
+    for val in data:
+            receptionTime = localizeNp64Tz(val[0])
+            generationTime = fromtimestampTz(val[1])
+            targetTime = fromtimestampTz(val[2])
+                        
+            yield FollowArray(receptionTime, generationTime, targetTime, val[3], val[4], val[5], targetTime-receptionTime)
+            
     #TODO: Return generator
     #TODO: Implement timezone awareness on the swglib side
     
@@ -427,10 +444,9 @@ def plotVel():
     plotAz = True if args.axis == AZ else False
        
     if ENABLE_CACHING:
-        producerH(TCS_CA, args.date, args.time_rng)
-        sys.exit()
-
-    flw_producer = producer(args.data_path)
+        flw_producer = producerH(TCS_CA, args.date, args.time_rng)
+    else:
+        flw_producer = producer(args.data_path)
 
     firstVal = flw_producer.next()
     outliersInPeriod = 0
@@ -481,7 +497,12 @@ def plotVel():
 
     #ax2.xaxis.set_major_formatter(matplotlib.dates.DateFormatter("%d/%m %H:%M:%S.%f"))
 
-    plt.gcf().autofmt_xdate()
+    #plt.gcf().autofmt_xdate()
+    plt.setp(ax1.get_xticklabels(), fontsize=9, visible=False)
+    ax2.xaxis.set_major_locator(ticker.MaxNLocator(10))
+    ax2.xaxis.set_major_formatter(matplotlib.dates.DateFormatter("%H:%M:%S.%f"))
+    ax2.xaxis.set_minor_locator(ticker.MaxNLocator(200))
+    plt.setp(ax2.get_xticklabels(), fontsize=9, rotation=20, ha='right')
     plt.show()    
 
 # -----------------------------------------------------------------------------
