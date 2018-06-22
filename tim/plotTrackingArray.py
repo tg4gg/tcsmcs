@@ -22,8 +22,6 @@ import pdb
 import os
 
 sys.path.insert(0,'../')
-sys.path.append('..')
-
 from swglib.export import DataManager, get_exporter
 
 ENABLE_CACHING = True #TODO: Enable sample set for caching
@@ -122,8 +120,6 @@ def parse_args():
     parser.add_argument('-cols',   '--columns',        dest='cols',          default='4,5', help='Columns to be plotted')
     parser.add_argument('-axis',   '--axis',        dest='axis',          default='az', help='Axis to be plotted, can be az or el')
     parser.add_argument('-time',   '--time_range',        dest='time_rng',    default=None, help='Specific time range format: HHMM-HHMM')
-    
-    
     
     parser.add_argument('-mode',   '--plot_mode',               dest='mode',          default=EXEC_TIME_MODE,
                         help='Different ways of representing the data, could be: {0}, {1} or {2}'.format(EXEC_TIME_MODE, POS_DIFF_MODE, PERIOD_MODE))
@@ -249,10 +245,9 @@ def producer(filename):
         for row in reader:
             if row[0].startswith('#') or row[1].startswith('#'):
                 continue
-            generationTime = fromtimestampTz(float(row[1]))
             receptionTime = strptimeTz(row[0][:-3], True)
+            generationTime = fromtimestampTz(float(row[1]))
             targetTime = fromtimestampTz(float(row[2]))
-            #print row            
             yield FollowArray(receptionTime, generationTime,\
                  targetTime,  fromtimestampTz(float(row[3])), float(row[4]), float(row[5]), targetTime-receptionTime \
                  )
@@ -267,14 +262,17 @@ def producerH(pv, dateStr, timeRangeStr):
     for val in data:
             receptionTime = localizeNp64Tz(val[0])
             generationTime = fromtimestampTz(val[1])
-            targetTime = fromtimestampTz(val[2])
-            #print val[0], 'vs', receptionTime
-            #sys.exit()            
+            targetTime = fromtimestampTz(val[2])          
             yield FollowArray(receptionTime, generationTime, targetTime, val[3], val[4], val[5], targetTime-receptionTime)
             
     #TODO: Return generator
     #TODO: Implement timezone awareness on the swglib side
     
+def getProducer():
+    if ENABLE_CACHING:
+        return producerH(TCS_CA, args.date, args.time_rng)
+    else:
+        return producer(args.data_path)
 
 #DebugArray = namedtuple('DebugArray', 'timestamp now targetTime deltaApplyT period sem1 sem2 dmdCnt dmdCorr dmdLowCorr dmdHighCorr flCnt available azPos elPos')
 def producerE(pv, dateStr, timeRangeStr):
@@ -320,14 +318,13 @@ def addZones(ax, begin, end):
 
 # Put a legend to the right of the current axis
     ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
-    
+
 def plotPeriod():
     """
     Here we are measuring periodicity between executions
     and periodicity (or duration) between consecutive targetTime calculations
     """
-    flw_producer = producerH(TCS_CA, args.date, args.time_rng)
-    
+    flw_producer = getProducer()
     first = flw_producer.next()
     diffNow_lst, diffTarget_lst = list(), list()
     prevNowT, prevTargetT = first.now, first.targetTime
@@ -396,7 +393,7 @@ def plotRaw(diff=False):
     Plots the data as it is, if diff flag is true it subtracts 2 consecutive
     values. [a b c] diff >> [b-a c-b]
     '''
-    flw_producer = producerH(TCS_CA, args.date, args.time_rng)
+    flw_producer = getProducer()
     i,j = getIndexes(args.cols)
     
     timeBase, aLst, bLst = list(), list(), list()
@@ -429,8 +426,47 @@ def plotRaw(diff=False):
     plt.gcf().autofmt_xdate()
     plt.show()
 
+def plotExecTime():
+    '''
+    Here we plot the time that is left until execution time (time before target)
+    you can chooose between tcs, mcs or both.
+    '''
+    flw_producer = getProducer()
+        
+    diff_lst = list()
+    for dp in flw_producer:
+        #print dp.targetTime-dp.now
+        diff_lst.append((dp.timestamp, dp.diff.total_seconds()))
+    
+    diffTime,diffVal=zip(*diff_lst)
+    
+    fig, ax1 = plt.subplots()   
+    plt.title("TCS-MCS Communication Analysis: {0} data from {1}\n Time before target time".format(args.system, args.date))
+    ax1.plot(diffTime, diffVal, "b.", markersize=MARKERSIZE)
+    ax1.grid(True)
+    #ax1.set_ylim([-0.05,0.05])
+    #ax1.set_yticks(np.arange(-0.05, 0.05, step=0.005))
+ 
+    if args.system == 'both':
+        flw_producer2 = producer(args.tcs_data_path)
+        #TODO: Fix legend issues when plotting both subsystems
+        diff_lst2 = list()
+        for dp in flw_producer2:
+            diff_lst2.append((dp.timestamp, dp.diff.total_seconds()))
+    
+        diffTime2,diffVal2=zip(*diff_lst2)    
+    
+        #ax2 = ax1.twinx()
+        ax1.plot(diffTime2, diffVal2, "r.", markersize=MARKERSIZE)
+        plt.gca().legend((MCS_SYSTEM+' entry', TCS_SYSTEM+' exit'))
+    
+    addZones(ax1, diffTime[0],diffTime[-1])
+    plt.gcf().autofmt_xdate()
+    plt.show()
+
+
 def plotPosDiff():
-    flw_producer = producerH(TCS_CA, args.date, args.time_rng)
+    flw_producer = getProducer()
 
     firstVal = flw_producer.next()
     outliersInPeriod = 0
@@ -487,10 +523,7 @@ def plotVel():
     AZ = 'az'
     plotAz = True if args.axis == AZ else False
        
-    if ENABLE_CACHING:
-        flw_producer = producerH(TCS_CA, args.date, args.time_rng)
-    else:
-        flw_producer = producer(args.data_path)
+    flw_producer = getProducer()
 
     firstVal = flw_producer.next()
     outliersInPeriod = 0
@@ -516,7 +549,6 @@ def plotVel():
             
     print "Last read line with date:", dp.timestamp
     
-   
     fig, ax1 = plt.subplots() 
     ax1 = plt.subplot(211)
     plt.title("TCS-MCS Pos./Vel. Analysis: {0} data from {1} - axis:{2}".format(args.system, args.date, args.axis))
@@ -555,10 +587,7 @@ def plotFull():
     '''
     Ignacio and his 10.000 plots on one graph haha
     '''   
-    if ENABLE_CACHING:
-        flw_producer = producerH(TCS_CA, args.date, args.time_rng)
-    else:
-        flw_producer = producer(args.data_path)
+    flw_producer = getProducer()
 
     diff_lst = list()
     exec_lst = list()
@@ -723,43 +752,7 @@ def plotEng():
 args = parse_args()
 
 if args.mode == EXEC_TIME_MODE :
-    '''
-    Here we plot the time that is left until execution time (time before target)
-    you can chooose between tcs, mcs or both.
-    '''
-    
-    flw_producer = producerH(TCS_CA, args.date, args.time_rng)
-    
-    diff_lst = list()
-    for dp in flw_producer:
-        #print dp.targetTime-dp.now
-        diff_lst.append((dp.timestamp, dp.diff.total_seconds()))
-    
-    diffTime,diffVal=zip(*diff_lst)
-    
-    fig, ax1 = plt.subplots()   
-    plt.title("TCS-MCS Communication Analysis: {0} data from {1}\n Time before target time".format(args.system, args.date))
-    ax1.plot(diffTime, diffVal, "b.", markersize=MARKERSIZE)
-    ax1.grid(True)
-    #ax1.set_ylim([-0.05,0.05])
-    #ax1.set_yticks(np.arange(-0.05, 0.05, step=0.005))
- 
-    if args.system == 'both':
-        flw_producer2 = producer(args.tcs_data_path)
-        #TODO: Fix legend issues when plotting both subsystems
-        diff_lst2 = list()
-        for dp in flw_producer2:
-            diff_lst2.append((dp.timestamp, dp.diff.total_seconds()))
-    
-        diffTime2,diffVal2=zip(*diff_lst2)    
-    
-        #ax2 = ax1.twinx()
-        ax1.plot(diffTime2, diffVal2, "r.", markersize=MARKERSIZE)
-        plt.gca().legend((MCS_SYSTEM+' entry', TCS_SYSTEM+' exit'))
-    
-    addZones(ax1, diffTime[0],diffTime[-1])
-    plt.gcf().autofmt_xdate()
-    plt.show()
+    plotExecTime()
 
 elif args.mode == POS_DIFF_MODE:
     plotPosDiff()
@@ -773,7 +766,6 @@ elif args.mode == RAW_DIFF_MODE:
 elif args.mode == PERIOD_MODE:
    plotPeriod()
    
-
 elif args.mode == VEL_MODE:
     plotVel()
    
