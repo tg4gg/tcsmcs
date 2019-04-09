@@ -432,11 +432,15 @@ def plotExecTime():
     you can chooose between tcs, mcs or both.
     '''
     flw_producer = getProducer()
+
+    plot_limit = [0.,0.1]  
         
     diff_lst = list()
     for dp in flw_producer:
         #print dp.targetTime-dp.now
         diff_lst.append((dp.timestamp, dp.diff.total_seconds()))
+        if not (plot_limit[0] < dp.diff.total_seconds() < plot_limit[1]):
+            print "out of limits:", dp.diff.total_seconds(), dp.timestamp
     
     diffTime,diffVal=zip(*diff_lst)
     
@@ -444,8 +448,8 @@ def plotExecTime():
     plt.title("TCS-MCS Communication Analysis: {0} data from {1}\n Time before target time".format(args.system, args.date))
     ax1.plot(diffTime, diffVal, "b.", markersize=MARKERSIZE)
     ax1.grid(True)
-    #ax1.set_ylim([-0.05,0.05])
-    #ax1.set_yticks(np.arange(-0.05, 0.05, step=0.005))
+    ax1.set_ylim(plot_limit)
+    ax1.set_yticks(np.arange(-0.1, 0.1, step=0.005))
  
     if args.system == 'both':
         flw_producer2 = producer(args.tcs_data_path)

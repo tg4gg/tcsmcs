@@ -477,9 +477,10 @@ def get_exporter(source):
 
 if __name__ == '__main__':
     # TEST CODE
-    dm = DataManager(get_exporter('MK'), root_dir='/tmp/rcm')
+    dm = DataManager(get_exporter('CP'), root_dir='/tmp/rcm')
     data = list(dm.getData('mc:azDemandPos', start=datetime(2018, 5, 4), end=datetime(2018, 5, 4, 6)))      # Initial bulk download
     data = list(dm.getData('mc:azDemandPos', start=datetime(2018, 5, 4), end=datetime(2018, 5, 4, 6, 10)))  # Incremental download
     data = list(dm.getData('mc:azDemandPos', start=datetime(2018, 5, 5), end=datetime(2018, 5, 4, 6, 30)))  # No download (start > end)
-    for data in dm.getData('mc:azDemandPos', start=datetime(2018, 5, 4, 6, 5), end=datetime(2018, 5, 4, 6, 35)):
-        print data
+    data = dm.getData('mc:azDemandPos', start=datetime(2018, 5, 4, 6, 5), end=datetime(2018, 5, 4, 6, 35))
+    for val in data:
+        print val
