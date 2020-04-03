@@ -61,7 +61,10 @@ ARCHIVE_MAPPING = {
     'fps': 'pr',
     'hbs': 'pr',
     'pr': 'pr',
-    }
+    'ta': 'sbflab',
+    'mc1': 'sbflab',
+    'tc1': 'sbflab',
+}
 
 def _format_value(value):
     if isinstance(value, float):
