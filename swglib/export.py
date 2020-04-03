@@ -10,9 +10,9 @@
 
 import os
 import subprocess
-import xmlrpclib
+import xmlrpc.client as xc
 from datetime import datetime, timedelta
-from itertools import izip, takewhile
+from itertools import takewhile
 import numpy as np
 from time import gmtime
 from collections import namedtuple
@@ -108,7 +108,7 @@ class ArchiveXmlRpcExporter(object):
     def __init__(self, site):
         self.site = site
         self._keys = None
-        self.server = xmlrpclib.Server(ARCHIVE_SITE_URL[site])
+        self.server = xc.Server(ARCHIVE_SITE_URL[site])
 
     def get_key(self, source):
         if self._keys is None:
@@ -408,7 +408,7 @@ def sorted_zip(*args):
     for arg in args:
         it = iter(arg)
         try:
-            candidates.append((it.next(), it))
+            candidates.append((it.__next__(), it))
         except StopIteration:
             pass
 
@@ -417,7 +417,7 @@ def sorted_zip(*args):
         next_item, it = candidates.pop()
         yield next_item
         try:
-            candidates.append((it.next(), it))
+            candidates.append((it.__next__(), it))
         except StopIteration:
             pass
 
@@ -486,4 +486,4 @@ if __name__ == '__main__':
     data = list(dm.getData('mc:azDemandPos', start=datetime(2018, 5, 5), end=datetime(2018, 5, 4, 6, 30)))  # No download (start > end)
     data = dm.getData('mc:azDemandPos', start=datetime(2018, 5, 4, 6, 5), end=datetime(2018, 5, 4, 6, 35))
     for val in data:
-        print val
+        print(val)
