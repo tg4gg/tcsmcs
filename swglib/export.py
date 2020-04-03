@@ -102,7 +102,7 @@ def addtotimestamp(dt, delta):
     if isinstance(dt, datetime):
         return dt + delta
     else:
-        return np.datetime64(dt.astype(int) + int(delta.total_seconds() * 1000000), 'ns')
+        return np.datetime64(int(dt.astype(int) + int(delta.total_seconds() * 1000000)), 'ns')
 
 class ArchiveXmlRpcExporter(object):
     def __init__(self, site):
@@ -230,7 +230,8 @@ class CacheFile(object):
         # data stream spans both. This would need additional support on the cache manager class
         group = self._cm.get_interval_for_stamp(stamp)
         if group is None:
-            self._file.write('\t'.join([isoformat(stamp)] + ["{0:.9f}".format(i) for i in items]) + '\n')
+            b1 = bytes('\t'.join([isoformat(stamp)] + ["{0:.9f}".format(i) for i in items]) + '\n', encoding='utf-8')
+            self._file.write(b1)
             if self._first is None:
                 self._first = stamp
             self._last = stamp
