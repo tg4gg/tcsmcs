@@ -51,4 +51,4 @@ ax1.set_ylim([-5., 5.])
 ax1.xaxis_date(TZ)
 plt.show()
 
-print("Ciao", datetime.now())
+print("Ciao ", datetime.now())
