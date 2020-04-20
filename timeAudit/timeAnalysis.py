@@ -12,9 +12,9 @@ import pdb
 import matplotlib.pyplot as plt
 from collections import namedtuple
 
-SITE = 'MK'
-start_date = datetime(2020, 4, 15, 2, 30)
-end_date =   datetime(2020, 4, 15, 4, 30)
+SITE = 'CP'
+start_date = datetime(2020, 4, 17, 17, 30)
+end_date =   datetime(2020, 4, 20, 6, 30)
 
 
 SystemData = namedtuple('SystemData', 'name times vals')
@@ -24,13 +24,14 @@ if SITE == 'CP':  # Archiver returns UTC dates, need to cover for that
     TZ = 'America/Santiago'
     DB = 'sbflab'
     systems = ['tc1', 'mc1', ]
+    systems = ['tc1', 'mc1', 'ta2', 'ta3', 'ta4']
     # systems = ['tc1', ]
 
 if SITE == 'MK':
     UTC_OFFSET = timedelta(hours=10)
     TZ = 'Pacific/Honolulu'
     DB = 'temporary'
-    systems = ['tcs',]
+    systems = ['tcs', 'mc', 'ta', 'm2', 'ag']
 
 def retrieveAllData():
     """" Gets the data for each system and returns an easy to plot list"""
@@ -38,7 +39,7 @@ def retrieveAllData():
     ret = list()
     for sys in systems:
         start = datetime.now()
-        print(start, 'Retrieving values for ta:' + sys + ':diff')
+        print(start, '\nRetrieving values for ta:' + sys + ':diff')
         sys_data = list(dm.getData('ta:' + sys + ':diff', start=start_date + UTC_OFFSET, end=end_date + UTC_OFFSET, db=DB))
         print("Retrieved", len(sys_data), "values for", sys, "elapsed time ", datetime.now() - start)
         data_unzip = list(zip(*sys_data))  # data[0] is (datetime, val)
@@ -57,9 +58,9 @@ def retrieveAllData():
 data = retrieveAllData()
 
 fig, ax1 = plt.subplots()
-plt.title("Time differences - ta is running as VME IOC connected to the Timebus")
+plt.title("Time differences - ta is running as VME IOC connected to the Timebus, generated at: {}".format(datetime.now()))
 for sys in data:
-    ax1.plot(sys.times, sys.vals, ".",label=sys.name)
+    ax1.plot(sys.times, sys.vals, "-",label=sys.name)
 ax1.grid(True)
 ax1.set_ylabel("Milliseconds")
 plt.gcf().autofmt_xdate()
