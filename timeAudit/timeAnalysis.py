@@ -1,7 +1,19 @@
 #! /usr/bin/python
 """
 Print time differences
-When Archiver is down/restarted ArchiveExport reports 2 false zeros with the same time stamps as the last record
+Known errors: When Archiver is down/restarted ArchiveExport reports 2 false zeros with the same time stamps as
+              the last record
+  -sys SYSTEMS [SYSTEMS ...], --systems SYSTEMS [SYSTEMS ...]
+                        The systems to be analyzed eg: tc1 ta mc1
+  -s STARTDATE, --startdate STARTDATE
+                        The Start Date - format YYYYMMDD-HHmm
+  -e ENDDATE, --enddate ENDDATE
+                        The End Date - format YYYYMMDD-HHmm
+  -si SITE, --site SITE
+                        The site: MKO, CPO, HBF or SBF
+  -r, --rms             Plot also RMS errors
+  -l YLIMS [YLIMS ...], --ylims YLIMS [YLIMS ...]
+                        The plot Y limits: bottom top
 """
 import sys
 
@@ -57,9 +69,8 @@ def parseArgs():
     return parser.parse_args()
 
 
-
 def retrieveChannels(systems):
-    """ Gets the channel names to be plotted based on: TOP, systems and RETRIEVE_RMS"""
+    """ Gets the channel names to be plotted based on: TOP, systems and args.rms"""
     chans = []
     for sys in systems:
         chans.append(TOP+sys+":diff")
@@ -67,6 +78,7 @@ def retrieveChannels(systems):
             chans.append(TOP+sys+":rmsErr.VALJ")
     return chans
 # chans = [ TOP+sys+":diff" for sys in systems ]
+
 
 def fromCache(pvname, start, end, db):
     """ If query is cached retrieve it directly from disk """
@@ -94,7 +106,7 @@ def retrieveAllData():
         start = datetime.now()
         print(start, '\nRetrieving values for:' + chan)
         chan_data = fromCache(chan, start=args.startdate + UTC_OFFSET, end=args.enddate + UTC_OFFSET, db=DB)
-        print(('Retrieved {0} values for {1} elapsed time {2} speed: {3:.3f} ms./sample').format(
+        print('Retrieved {0} values for {1} elapsed time {2} speed: {3:.3f} ms./sample'.format(
             len(chan_data), chan, datetime.now() - start, (datetime.now() - start).total_seconds() * 1000. / len(
                                                                                                      chan_data)))
         data_unzip = list(zip(*chan_data))  # data[0] is (datetime, val)
@@ -106,7 +118,8 @@ def retrieveAllData():
             print("Max val:", max(chan_data.vals), " Min val:", min(chan_data.vals))
             ret.append(chan_data)
         else:
-            print("No data found for {0} in the specified period.".format(sys))  # TODO: Warning
+            print("No data found for {0} in the specified period.".format(sys))  # TODO: Send warning
+
     return ret
 
 
@@ -115,7 +128,7 @@ def retrieveAllData():
 TOP = 'ta:'
 
 args = parseArgs()
-print(args.ylims)
+
 # Site specific adjustments
 if args.site == 'SBF':  # Archiver returns UTC dates, need to cover for that
     UTC_OFFSET = timedelta(hours=4)
