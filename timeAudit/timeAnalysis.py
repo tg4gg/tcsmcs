@@ -15,11 +15,13 @@ import numpy as np
 import os
 
 SITE = 'CP'
-start_date = datetime(2020, 4, 29, 3, 0)
+RETRIEVE_RMS = False
+TOP = 'ta:'
+start_date = datetime(2020, 5, 12, 9, 0)
 #start_date = datetime(2020, 4, 24, 23, 44, 0)
 #start_date = datetime(2020, 4, 20, 7, 10)
 end_date = datetime(2020, 4, 24, 23, 44, 30)
-end_date = datetime(2020, 4, 29, 12, 0)
+end_date = datetime(2020, 5, 12, 12, 55)
 
 TITLE_SUFFIX = "\nTotal data set length: " + start_date.strftime("%Y.%m.%d-%H:%M:%S") + \
                '->' + end_date.strftime("%Y.%m.%d-%H:%M:%S")
@@ -31,10 +33,11 @@ if SITE == 'CP':  # Archiver returns UTC dates, need to cover for that
     TZ = 'America/Santiago'
     DB = 'sbflab'
     TITLE_PREFIX = 'SBF Lab: '
-    systems = ['tc1', 'mc1', ]
-    systems = ['tc1', 'mc1', 'ta2', 'ta3', 'ta4']
+    systems = ['ta', 'mc1', ]
+    # systems = [ 'ta', 'mc1', 'ta3', 'ta4']
     # systems = ['tc1', 'ta3', ]
-    #systems = ['tc1', 'ta2', 'ta4']
+    # systems = ['tc1', 'ta2', 'ta4']
+
 
 if SITE == 'MK':
     UTC_OFFSET = timedelta(hours=10)
@@ -45,6 +48,15 @@ if SITE == 'MK':
     systems = ['mc', 'ta', 'm2', 'cr',]
     systems = ['mc','ta', 'ag']
 
+def retrieveChannels(systems):
+    """ Gets the channel names to be plotted based on: TOP, systems and RETRIEVE_RMS"""
+    chans = []
+    for sys in systems:
+        chans.append(TOP+sys+":diff")
+        if RETRIEVE_RMS:
+            chans.append(TOP+sys+":rmsErr.VALJ")
+    return chans
+# chans = [ TOP+sys+":diff" for sys in systems ]
 
 def fromCache(pvname, start, end, db):
     """ If query is cached retrieve it directly from disk """
@@ -67,23 +79,22 @@ def fromCache(pvname, start, end, db):
 def retrieveAllData():
     """" Gets the data for each system and returns an easy to plot list"""
     ret = list()
-    for sys in systems:
+    chans = retrieveChannels(systems)
+    for chan in chans:
         start = datetime.now()
-        print(start, '\nRetrieving values for ta:' + sys + ':diff')
-        sys_data = fromCache('ta:' + sys + ':diff', start=start_date + UTC_OFFSET, end=end_date + UTC_OFFSET, db=DB)
-        print(('Retrieved {0} values for {1} elapsed time {2} speed: {3:.3f} ms./sample').format(len(sys_data), sys,
-                                                                                                 datetime.now() - start,
-                                                                                                 (
-                                                                                                             datetime.now() - start).total_seconds() * 1000. / len(
-                                                                                                     sys_data)))
-        data_unzip = list(zip(*sys_data))  # data[0] is (datetime, val)
+        print(start, '\nRetrieving values for:' + chan)
+        chan_data = fromCache(chan, start=start_date + UTC_OFFSET, end=end_date + UTC_OFFSET, db=DB)
+        print(('Retrieved {0} values for {1} elapsed time {2} speed: {3:.3f} ms./sample').format(
+            len(chan_data), chan, datetime.now() - start, (datetime.now() - start).total_seconds() * 1000. / len(
+                                                                                                     chan_data)))
+        data_unzip = list(zip(*chan_data))  # data[0] is (datetime, val)
         if len(data_unzip) > 0:
-            sys_data = SystemData(sys, data_unzip[0], [x * 1000.0 for x in data_unzip[1]])  # convert to milliseconds
-            # periodicity = [abs((sys_data.vals[i+1]-sys_data.vals[i])) for i in range(len(sys_data.vals)-1)]
+            chan_data = SystemData(chan, data_unzip[0], [x * 1000.0 for x in data_unzip[1]])  # convert to milliseconds
+            # periodicity = [abs((chan_data.vals[i+1]-chan_data.vals[i])) for i in range(len(chan_data.vals)-1)]
             # [if period  for period in periodicity]
             # pdb.set_trace()
-            print("Max val:", max(sys_data.vals), " Min val:", min(sys_data.vals))
-            ret.append(sys_data)
+            print("Max val:", max(chan_data.vals), " Min val:", min(chan_data.vals))
+            ret.append(chan_data)
         else:
             print("No data found for {0} in the specified period.".format(sys))  # TODO: Warning
     return ret
@@ -93,8 +104,20 @@ data = retrieveAllData()
 
 fig, ax1 = plt.subplots()
 plt.title(TITLE_PREFIX + "Time differences, generated at: {}".format(datetime.now()) + TITLE_SUFFIX)
-for sys in data:
-    ax1.plot(sys.times, sys.vals, ".", label=sys.name)
+
+color_id, color = -1, 'C0.'
+for sd in data:
+    # With this plotting technique we are requiring a specific order for the input
+    if not "rmsErr" in sd.name:
+        color_id += 1
+        color = 'C' + str(color_id) + "."
+        #alpha = 0.2
+    else:  # RMS will be plotted as lines
+        color = 'C' + str(color_id) + "-"
+        #alpha = 1.0
+
+    ax1.plot(sd.times, sd.vals, color, label=sd.name)
+
 ax1.grid(True)
 ax1.set_ylabel("Milliseconds")
 plt.gcf().autofmt_xdate()
