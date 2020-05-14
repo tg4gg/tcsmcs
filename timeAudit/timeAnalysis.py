@@ -13,47 +13,57 @@ import matplotlib.pyplot as plt
 from collections import namedtuple
 import numpy as np
 import os
+import argparse
 
-SITE = 'CP'
-RETRIEVE_RMS = False
-TOP = 'ta:'
-start_date = datetime(2020, 5, 12, 9, 0)
-#start_date = datetime(2020, 4, 24, 23, 44, 0)
-#start_date = datetime(2020, 4, 20, 7, 10)
-end_date = datetime(2020, 4, 24, 23, 44, 30)
-end_date = datetime(2020, 5, 12, 12, 55)
-
-TITLE_SUFFIX = "\nTotal data set length: " + start_date.strftime("%Y.%m.%d-%H:%M:%S") + \
-               '->' + end_date.strftime("%Y.%m.%d-%H:%M:%S")
 
 SystemData = namedtuple('SystemData', 'name times vals')
 
-if SITE == 'CP':  # Archiver returns UTC dates, need to cover for that
-    UTC_OFFSET = timedelta(hours=4)
-    TZ = 'America/Santiago'
-    DB = 'sbflab'
-    TITLE_PREFIX = 'SBF Lab: '
-    systems = ['ta', 'mc1', ]
-    # systems = [ 'ta', 'mc1', 'ta3', 'ta4']
-    # systems = ['tc1', 'ta3', ]
-    # systems = ['tc1', 'ta2', 'ta4']
+
+def valid_date(s):
+    try:
+        return datetime.strptime(s, "%Y%m%d-%H%M")
+    except ValueError:
+        msg = "Not a valid date: '{0}'.".format(s)
+        raise argparse.ArgumentTypeError(msg)
 
 
-if SITE == 'MK':
-    UTC_OFFSET = timedelta(hours=10)
-    TZ = 'Pacific/Honolulu'
-    DB = 'temporary'
-    TITLE_PREFIX = 'MKO Telescope: '
-    systems = ['tcs', 'mc', 'ta', 'm2', 'ag']
-    systems = ['mc', 'ta', 'm2', 'cr',]
-    systems = ['mc','ta', 'ag']
+def parseArgs():
+    """ Parses cmd line arguments """
+    parser = argparse.ArgumentParser(description='Plot time differences')
+
+    parser.add_argument('-sys','--systems', nargs='+',
+                        help='The systems to be analyzed eg: tc1 ta mc1', required=True)
+
+    parser.add_argument("-s",
+                        "--startdate",
+                        help="The Start Date - format YYYYMMDD-HHmm",
+                        required=True,
+                        type=valid_date)
+    parser.add_argument("-e",
+                        "--enddate",
+                        help="The End Date - format YYYYMMDD-HHmm",
+                        required=True,
+                        type=valid_date)
+
+    parser.add_argument('-si','--site',
+                        help='The site: MKO, CPO, HBF or SBF', required=True)
+
+    parser.add_argument('-r','--rms', action="store_true",
+                        help='Plot also RMS errors')
+
+    parser.add_argument('-l', '--ylims', nargs='+',
+                        help='The plot Y limits: bottom top', type=float, default=[-5, 5])
+
+    return parser.parse_args()
+
+
 
 def retrieveChannels(systems):
     """ Gets the channel names to be plotted based on: TOP, systems and RETRIEVE_RMS"""
     chans = []
     for sys in systems:
         chans.append(TOP+sys+":diff")
-        if RETRIEVE_RMS:
+        if args.rms:
             chans.append(TOP+sys+":rmsErr.VALJ")
     return chans
 # chans = [ TOP+sys+":diff" for sys in systems ]
@@ -61,13 +71,13 @@ def retrieveChannels(systems):
 def fromCache(pvname, start, end, db):
     """ If query is cached retrieve it directly from disk """
     TMP_DIR = '/tmp/rcm2/'
-    path = TMP_DIR + pvname + "/" + SITE + "/" + start.strftime("%Y%m%d-%H%M%S") + "/"
+    path = TMP_DIR + pvname + "/" + args.site + "/" + start.strftime("%Y%m%d-%H%M%S") + "/"
     fn = path + end.strftime("%Y%m%d-%H%M%S") + ".npy"
     if os.path.exists(fn):  # Return from cache
         return np.load(fn, allow_pickle=True)
 
     else:  # Retrieve data and cache it for next query
-        dm = DataManager(get_exporter(SITE), root_dir='/tmp/rcm')
+        dm = DataManager(get_exporter(args.exporter), root_dir='/tmp/rcm')
         sys_data = list(dm.getData(pvname, start=start, end=end, db=db))
         start = datetime.now()
         os.makedirs(path, exist_ok=True)
@@ -79,11 +89,11 @@ def fromCache(pvname, start, end, db):
 def retrieveAllData():
     """" Gets the data for each system and returns an easy to plot list"""
     ret = list()
-    chans = retrieveChannels(systems)
+    chans = retrieveChannels(args.systems)
     for chan in chans:
         start = datetime.now()
         print(start, '\nRetrieving values for:' + chan)
-        chan_data = fromCache(chan, start=start_date + UTC_OFFSET, end=end_date + UTC_OFFSET, db=DB)
+        chan_data = fromCache(chan, start=args.startdate + UTC_OFFSET, end=args.enddate + UTC_OFFSET, db=DB)
         print(('Retrieved {0} values for {1} elapsed time {2} speed: {3:.3f} ms./sample').format(
             len(chan_data), chan, datetime.now() - start, (datetime.now() - start).total_seconds() * 1000. / len(
                                                                                                      chan_data)))
@@ -100,11 +110,39 @@ def retrieveAllData():
     return ret
 
 
+# --------------- MAIN ------------------
+
+TOP = 'ta:'
+
+args = parseArgs()
+print(args.ylims)
+# Site specific adjustments
+if args.site == 'SBF':  # Archiver returns UTC dates, need to cover for that
+    UTC_OFFSET = timedelta(hours=4)
+    TZ = 'America/Santiago'
+    DB = 'sbflab'
+    TITLE_PREFIX = 'SBF Lab: '
+    args.exporter = 'CP'
+    # systems = [ 'ta', 'mc1', 'ta3', 'ta4']
+
+if args.site == 'MKO':
+    UTC_OFFSET = timedelta(hours=10)
+    TZ = 'Pacific/Honolulu'
+    DB = 'temporary'
+    TITLE_PREFIX = 'MKO Telescope: '
+    args.exporter = 'MK'
+    # systems = ['tcs', 'mc', 'ta', 'm2', 'ag']
+
+# Core function
 data = retrieveAllData()
 
+# Now format and plot
 fig, ax1 = plt.subplots()
+TITLE_SUFFIX = "\nTotal data set length: " + args.startdate.strftime("%Y.%m.%d-%H:%M:%S") + \
+               '->' + args.enddate.strftime("%Y.%m.%d-%H:%M:%S")
 plt.title(TITLE_PREFIX + "Time differences, generated at: {}".format(datetime.now()) + TITLE_SUFFIX)
 
+# Plotted data and its corresponding RMS will use the same color
 color_id, color = -1, 'C0.'
 for sd in data:
     # With this plotting technique we are requiring a specific order for the input
@@ -123,7 +161,7 @@ ax1.set_ylabel("Milliseconds")
 plt.gcf().autofmt_xdate()
 # ax1.legend(loc='center left', bbox_to_anchor=(1, 0.5))
 ax1.legend()
-ax1.set_ylim([-5., 5.])
+ax1.set_ylim(args.ylims)
 ax1.xaxis_date(TZ)
 # pdb.set_trace()
 plt.show()
