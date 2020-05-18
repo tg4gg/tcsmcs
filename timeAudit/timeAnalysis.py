@@ -12,8 +12,9 @@ Known errors: When Archiver is down/restarted ArchiveExport reports 2 false zero
   -si SITE, --site SITE
                         The site: MKO, CPO, HBF or SBF
   -r, --rms             Plot also RMS errors
-  -l YLIMS [YLIMS ...], --ylims YLIMS [YLIMS ...]
+  -y YLIMS [YLIMS ...], --ylims YLIMS [YLIMS ...]
                         The plot Y limits: bottom top
+  -l, --lines           Plot with lines instead of dots
 """
 import sys
 
@@ -63,8 +64,11 @@ def parseArgs():
     parser.add_argument('-r','--rms', action="store_true",
                         help='Plot also RMS errors')
 
-    parser.add_argument('-l', '--ylims', nargs='+',
-                        help='The plot Y limits: bottom top', type=float, default=[-5, 5])
+    parser.add_argument('-y', '--ylims', nargs='+',
+                        help='The plot Y limits: bottom top', type=float)
+
+    parser.add_argument('-l','--lines', action="store_true",
+                        help='Plot with lines instead of dots')
 
     return parser.parse_args()
 
@@ -161,7 +165,7 @@ for sd in data:
     # With this plotting technique we are requiring a specific order for the input
     if not "rmsErr" in sd.name:
         color_id += 1
-        color = 'C' + str(color_id) + "."
+        color = 'C' + str(color_id) + "-" if args.lines else "."
         #alpha = 0.2
     else:  # RMS will be plotted as lines
         color = 'C' + str(color_id) + "-"
@@ -174,7 +178,8 @@ ax1.set_ylabel("Milliseconds")
 plt.gcf().autofmt_xdate()
 # ax1.legend(loc='center left', bbox_to_anchor=(1, 0.5))
 ax1.legend()
-ax1.set_ylim(args.ylims)
+if args.ylims:
+    ax1.set_ylim(args.ylims)
 ax1.xaxis_date(TZ)
 # pdb.set_trace()
 plt.show()
