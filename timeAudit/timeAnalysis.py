@@ -108,7 +108,7 @@ def retrieveAllData():
     chans = retrieveChannels(args.systems)
     for chan in chans:
         start = datetime.now()
-        print(start, '\nRetrieving values for:' + chan)
+        print(start, '\nRetrieving values for: ' + chan)
         chan_data = fromCache(chan, start=args.startdate + UTC_OFFSET, end=args.enddate + UTC_OFFSET, db=DB)
         print('Retrieved {0} values for {1} elapsed time {2} speed: {3:.3f} ms./sample'.format(
             len(chan_data), chan, datetime.now() - start, (datetime.now() - start).total_seconds() * 1000. / len(
